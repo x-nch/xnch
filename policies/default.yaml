@@ -1,0 +1,61 @@
+version: "1.0"
+policy_id: "nexi.default"
+description: "Default Nexi policy — baseline governance rules"
+
+rules:
+  - rule_id: "block-weekend-deploys"
+    priority: 10
+    conditions:
+      action_type: "DEPLOY"
+      time_window:
+        days: ["SAT", "SUN"]
+    action:
+      verdict: BLOCK
+      reason: "Deployments restricted on weekends (ops-safety)"
+
+  - rule_id: "warn-high-risk-execution"
+    priority: 20
+    conditions:
+      intent_class: "EXECUTION"
+      reversible: false
+    action:
+      verdict: ALLOW_WITH_WARNINGS
+      reason: "Irreversible execution — operator should review"
+      warnings:
+        - "This action cannot be rolled back automatically"
+
+  - rule_id: "agent-execution-rate"
+    priority: 30
+    conditions:
+      actor_role: "AGENT"
+      intent_class: "EXECUTION"
+    action:
+      verdict: ALLOW
+      reason: "Agent execution allowed; rate enforcement at KV Cache layer"
+
+  - rule_id: "viewer-read-only"
+    priority: 40
+    conditions:
+      actor_role: "VIEWER"
+      intent_class: "EXECUTION"
+    action:
+      verdict: BLOCK
+      reason: "VIEWER role does not have execution capability"
+
+  - rule_id: "require-resource-check-on-deploy"
+    priority: 50
+    conditions:
+      action_type: "DEPLOY"
+    action:
+      verdict: MODIFY
+      reason: "Resource check required before deployment"
+      modify_spec:
+        field: "params.resource_check"
+        value: true
+
+  - rule_id: "allow-all"
+    priority: 999
+    conditions: {}
+    action:
+      verdict: ALLOW
+      reason: "Default allow — no matching rule"
