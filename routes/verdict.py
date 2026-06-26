@@ -1,4 +1,6 @@
 """Step 10: /verdict — authoritative policy check, Decision Ledger write, token issuance."""
+import json
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -6,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from ..auth.token import ExecutionTokenClaims
+from ..observability.langfuse_client import trace_llm_call
 
 router = APIRouter(tags=["verdict"])
 
@@ -63,6 +66,14 @@ async def verdict(body: VerdictRequest, request: Request) -> dict[str, Any]:
         )
         app.event_log.emit(ctx.get("session_id", ""), "xnch.verdict", "VERDICT_BLOCK",
                            data={"policy_refs": result.policy_refs})
+        await trace_llm_call(
+            prompt=json.dumps({"action": action, "actor": actor, "context": ctx}),
+            response=json.dumps({"verdict": "BLOCK", "reason": result.policy_refs}),
+            model="policy-engine",
+            latency_ms=0,
+            tokens_used=0,
+            trace_id=ctx.get("session_id", ""),
+        )
         return {
             "request_id": body.request_id,
             "verdict": "BLOCK",
@@ -103,6 +114,15 @@ async def verdict(body: VerdictRequest, request: Request) -> dict[str, Any]:
 
     app.event_log.emit(ctx.get("session_id", ""), "xnch.verdict", "VERDICT_ALLOW",
                        data={"audit_ref": audit_ref, "policy_refs": result.policy_refs})
+
+    await trace_llm_call(
+        prompt=json.dumps({"action": action, "actor": actor, "context": ctx}),
+        response=json.dumps({"verdict": result.verdict, "token": token[:16] + "..." if token else ""}),
+        model="policy-engine",
+        latency_ms=0,
+        tokens_used=0,
+        trace_id=ctx.get("session_id", ""),
+    )
 
     return {
         "request_id": body.request_id,

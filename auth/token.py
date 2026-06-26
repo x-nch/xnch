@@ -6,6 +6,16 @@ from uuid import UUID, uuid4
 import jwt
 
 from ..config import settings
+from xnch.security.trust_model import TrustLevel, get_trust_level
+
+
+_TOKEN_TTL_BY_TRUST: dict[TrustLevel, int] = {
+    TrustLevel.SYSTEM: 7 * 86400,
+    TrustLevel.OWNER: 86400,
+    TrustLevel.TRUSTED_AGENT: 3600,
+    TrustLevel.EXTERNAL_AGENT: 1800,
+    TrustLevel.UNTRUSTED: 0,
+}
 
 
 @dataclass
@@ -49,13 +59,16 @@ class TokenSigner:
     def issue(self, claims: ExecutionTokenClaims) -> tuple[str, int]:
         """Issue a signed RS256 execution token. Returns (token, ttl_ms)."""
         now = int(time.time())
-        ttl_s = settings.token_ttl_ms // 1000
+        trust_level = get_trust_level(claims.actor_role)
+        ttl_s = _TOKEN_TTL_BY_TRUST.get(trust_level, 3600)
+        ttl_ms = ttl_s * 1000
         payload = {
             "iss": "xnch",
             "sub": "execution_token",
             "jti": str(uuid4()),
             "iat": now,
             "exp": now + ttl_s,
+            "role": claims.actor_role,
             "session_id": str(claims.session_id),
             "decision_id": str(claims.decision_id),
             "trace_id": str(claims.trace_id),
@@ -65,10 +78,11 @@ class TokenSigner:
             "entity_class": claims.entity_class,
             "policy_version": claims.policy_version,
             "system_state_version": claims.system_state_version,
-            "token_ttl_ms": settings.token_ttl_ms,
+            "token_ttl_ms": ttl_ms,
+            "trust_level": trust_level.name,
         }
         token = jwt.encode(payload, self._private_pem, algorithm="RS256")
-        return token, settings.token_ttl_ms
+        return token, ttl_ms
 
 
 class TokenVerifier:

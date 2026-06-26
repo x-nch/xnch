@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from xnch.security.actor_sandbox import get_capabilities
+
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 
@@ -71,6 +73,13 @@ async def memory_read(body: MemoryReadRequest, request: Request) -> dict[str, An
 async def memory_write(body: MemoryWriteRequest, request: Request) -> dict[str, Any]:
     """Step 14: write prediction delta + early extraction flag to episode."""
     app = request.app.state
+
+    caps = get_capabilities(body.actor_role)
+    if not caps.can_write_memory:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Actor '{body.actor_role}' does not have write memory capability",
+        )
 
     if body.write_type == "EPISODE_PREDICTION_UPDATE":
         payload = body.payload

@@ -46,9 +46,30 @@ class Settings(BaseSettings):
     # Nexi callback
     nexi_base_url: str = "http://localhost:8000"
 
+    # PostgreSQL / pgvector
+    postgres_url: str = "postgresql://localhost:5432/xnch"
+
     # Learning
     pattern_min_observations: int = 10
     score_adapter_accuracy_threshold: float = 0.6
+
+    # Langfuse observability
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
+    # LiteLLM proxy
+    litellm_proxy_url: str = "http://litellm:4000"
+
+    # Graph extractor
+    graph_extractor_model: str = "ollama/phi3:mini"
+
+    # Perception
+    vault_dir: Path = Path("~/.xnch/vault").expanduser()
+    perception_redis_db: int = 0
+    attention_silence_threshold_s: float = 1.5
+    attention_screen_diff_threshold: float = 0.15
+    attention_idle_timeout_s: int = 600
 
 
 settings = Settings()

@@ -1,0 +1,19 @@
+model_list:
+  - model_name: gemma4-local
+    litellm_params:
+      model: ollama/gemma4:26b
+      api_base: http://i9-node:11434
+  - model_name: claude-judgment
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+  - model_name: phi3-encoder
+    litellm_params:
+      model: ollama/phi3:mini
+      api_base: http://i7-node:11434
+
+router_settings:
+  routing_strategy: usage-based-routing
+  fallbacks:
+    - "gemma4-local": ["claude-judgment"]
+  allowed_fails: 3
+  num_retries: 2

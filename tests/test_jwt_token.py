@@ -24,8 +24,8 @@ def _claims() -> ExecutionTokenClaims:
         session_id=uuid4(),
         decision_id=uuid4(),
         trace_id=uuid4(),
-        actor_id="operator",
-        actor_role="OPERATOR",
+        actor_id="openclaw",
+        actor_role="openclaw",
         action_type="DEPLOY",
         entity_class="ML_MODEL",
         policy_version="v1.0",
@@ -45,7 +45,8 @@ def test_token_required_fields(signer, keypair):
     for field in ["iss", "sub", "jti", "iat", "exp",
                   "session_id", "decision_id", "trace_id",
                   "actor_id", "actor_role", "action_type", "entity_class",
-                  "policy_version", "system_state_version", "token_ttl_ms"]:
+                  "policy_version", "system_state_version", "token_ttl_ms",
+                  "role", "trust_level"]:
         assert field in payload, f"Missing required field: {field}"
 
 
@@ -58,20 +59,20 @@ def test_iss_and_sub_literals(signer, keypair):
 
 def test_token_ttl_ms_returned(signer):
     _, ttl_ms = signer.issue(_claims())
-    assert ttl_ms == 30_000
+    assert ttl_ms == 86_400_000
 
 
-def test_exp_is_iat_plus_30(signer, keypair):
+def test_exp_is_iat_plus_86400(signer, keypair):
     token, _ = signer.issue(_claims())
     payload = jwt.decode(token, keypair.public_pem, algorithms=["RS256"])
-    assert payload["exp"] == payload["iat"] + 30
+    assert payload["exp"] == payload["iat"] + 86400
 
 
 def test_public_key_verifies(keypair):
     signer = TokenSigner(keypair.private_pem)
     token, _ = signer.issue(_claims())
     payload = jwt.decode(token, keypair.public_pem, algorithms=["RS256"])
-    assert payload["actor_role"] == "OPERATOR"
+    assert payload["actor_role"] == "openclaw"
 
 
 def test_wrong_key_rejected(tmp_path):

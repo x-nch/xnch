@@ -9,12 +9,14 @@ from .auth import load_or_generate_keypair, GovernanceStore, TokenSigner, TokenV
 from .audit import EventLog, DecisionLedger
 from .config import settings
 from .learning import PatternExtractor, ScoreAdapter, PolicyCandidateGenerator
-from .memory import init_db, EpisodicStore, PatternStore, KVCache
+from .memory import init_db, EpisodicStore, PatternStore, KVCache, PgEpisodicStore
+from .memory import SensoryBuffer, WorkingMemory, GraphStore, RelationshipStore
 from .memory.db import get_state_version, get_policy_version, increment_state_version
 from .policy import PolicyLoader, PolicyEngine
 from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
+    nexi_gateway_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,8 +57,28 @@ async def lifespan(app: FastAPI):
     s.policy_engine = PolicyEngine(policy_set)
     s.policy_loader = loader
 
+    # PG episodic store (production backend)
+    s.pg_episodic = PgEpisodicStore(settings.postgres_url)
+    await s.pg_episodic.connect()
+
+    # Layer 0 — Sensory buffer (Redis perception signals)
+    s.sensory_buffer = SensoryBuffer(settings.redis_url)
+
+    # Layer 1 — Working memory (Redis session context)
+    s.working_memory = WorkingMemory(settings.redis_url)
+
+    # Layer 3 — Graph store (agentmemory semantic graph)
+    s.relationship_store = RelationshipStore(settings.postgres_url)
+    await s.relationship_store.connect()
+    s.graph_store = GraphStore(db_path=settings.db_path, relationship_store=s.relationship_store)
+    s.graph_store.connect()
+
+    # Cold-start seed identity memories on first boot
+    from nexi.character.cold_start_seeder import seed_identity_memories
+    await seed_identity_memories(s.pg_episodic)
+
     # Learning
-    s.pattern_extractor = PatternExtractor(s.episodic, s.pattern_store)
+    s.pattern_extractor = PatternExtractor(s.pg_episodic, s.pattern_store)
     s.score_adapter = ScoreAdapter(settings.db_path)
     s.policy_candidates = PolicyCandidateGenerator(s.pattern_store, settings.db_path)
 
@@ -78,24 +100,9 @@ async def lifespan(app: FastAPI):
 
     # Scheduler
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(
-        lambda: __import__('asyncio').get_event_loop().create_task(
-            s.pattern_extractor.run()
-        ),
-        "cron", hour="*/6", id="pattern_extractor",
-    )
-    scheduler.add_job(
-        lambda: __import__('asyncio').get_event_loop().create_task(
-            s.score_adapter.evaluate()
-        ),
-        "cron", hour="*/6", minute=30, id="score_adapter",
-    )
-    scheduler.add_job(
-        lambda: __import__('asyncio').get_event_loop().create_task(
-            s.policy_candidates.run()
-        ),
-        "cron", hour="*/6", minute=45, id="policy_candidates",
-    )
+    scheduler.add_job(s.pattern_extractor.run, "cron", hour="*/6", id="pattern_extractor")
+    scheduler.add_job(s.score_adapter.evaluate, "cron", hour="*/6", minute=30, id="score_adapter")
+    scheduler.add_job(s.policy_candidates.run, "cron", hour="*/6", minute=45, id="policy_candidates")
     scheduler.start()
     s.scheduler = scheduler
 
@@ -106,6 +113,10 @@ async def lifespan(app: FastAPI):
 
     scheduler.shutdown(wait=False)
     await s.kv_cache.aclose()
+    await s.sensory_buffer.aclose()
+    await s.working_memory.aclose()
+    await s.relationship_store.close()
+    await s.pg_episodic.close()
     s.event_log.emit("shutdown", "xnch", "SERVER_STOPPED")
 
 
@@ -118,6 +129,7 @@ app.include_router(verdict_router)
 app.include_router(execution_router)
 app.include_router(governance_router)
 app.include_router(auth_router)
+app.include_router(nexi_gateway_router)
 
 
 @app.get("/health")
