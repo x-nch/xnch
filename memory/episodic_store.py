@@ -66,6 +66,15 @@ class EpisodicStore:
             await db.commit()
         return episode_id
 
+    async def get_episode(self, episode_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self._db) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM episodes WHERE episode_id = ?", (episode_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
     async def write_prediction_update(
         self,
         episode_id: str,
@@ -115,7 +124,7 @@ class EpisodicStore:
         async with aiosqlite.connect(self._db) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                """SELECT episode_id, action_type, entity_class, outcome, created_at
+                """SELECT episode_id, action_type, entity_class, outcome, created_at, completed_at
                    FROM episodes
                    WHERE intent_class = ? AND entity_class = ? AND actor_role = ?
                      AND created_at >= ? AND outcome IS NOT NULL

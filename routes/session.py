@@ -1,4 +1,5 @@
 """Step 1-2: Input Layer → xnch → Nexi session initialization."""
+import json
 import logging
 from typing import Any
 from uuid import uuid4
@@ -86,6 +87,12 @@ async def session_init(body: SessionInitRequest, request: Request) -> dict[str, 
         logger.error("Nexi /session/start failed: %s", exc)
         raise HTTPException(status_code=502, detail="Nexi unavailable")
 
+    # Store conversation turn in working memory
+    session_id = session_context["session_id"]
+    await app.working_memory.append_turn(session_id, "user", body.raw_input)
+    response_text = nexi_response.get("status", "") or nexi_response.get("error", "")
+    await app.working_memory.append_turn(session_id, "assistant", response_text)
+
     return nexi_response
 
 
@@ -95,5 +102,38 @@ async def clarify(session_id: str, body: ClarifyRequest, request: Request) -> di
     app = request.app.state
 
     # Find session context by session_id (scan KV — v0: linear search)
-    # Production: maintain a secondary index session_id → idempotency_key
-    raise HTTPException(status_code=501, detail="Clarification re-entry not yet implemented in v0")
+    redis = app.kv_cache.redis_client
+    cursor = 0
+    session_context = None
+    while True:
+        cursor, keys = await redis.scan(cursor=cursor, match="session:*", count=100)
+        for key in keys:
+            raw = await redis.get(key)
+            if raw:
+                ctx = json.loads(raw)
+                if ctx.get("session_id") == session_id:
+                    session_context = ctx
+                    break
+        if cursor == 0 or session_context is not None:
+            break
+
+    if session_context is None:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+
+    # Re-forward to Nexi with amended input, keeping same session_id
+    session_context["raw_input"] = body.amended_input
+
+    try:
+        async with httpx.AsyncClient(base_url=settings.nexi_base_url, timeout=120.0) as client:
+            resp = await client.post("/session/start", json=session_context)
+        nexi_response = resp.json()
+    except Exception as exc:
+        logger.error("Nexi /session/start failed: %s", exc)
+        raise HTTPException(status_code=502, detail="Nexi unavailable")
+
+    # Append conversation turn
+    await app.working_memory.append_turn(session_id, "user", body.amended_input)
+    response_text = nexi_response.get("status", "") or nexi_response.get("error", "")
+    await app.working_memory.append_turn(session_id, "assistant", response_text)
+
+    return nexi_response

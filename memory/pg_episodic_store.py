@@ -179,21 +179,9 @@ class PgEpisodicStore:
         context_snapshot: dict[str, Any] | None = None,
         scores_json: str | None = None,
         generation_path: str = "MODEL",
-    ) -> uuid.UUID | str:
-        if not self._pool:
-            raise RuntimeError("PgEpisodicStore: PostgreSQL pool not initialized — call connect() with a real DSN")
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """INSERT INTO decision_episodes
-                   (decision_id, intent_class, action_type, entity_class, actor_role,
-                    context_snapshot, scores_json, generation_path)
-                   VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8)
-                   RETURNING episode_id""",
-                str(decision_id), intent_class, action_type, entity_class, actor_role,
-                json.dumps(context_snapshot) if context_snapshot else None,
-                scores_json, generation_path,
-            )
-            return row["episode_id"]
+    ) -> str:
+        """Stub — v0 uses SQLite EpisodicStore for decision episodes."""
+        return str(uuid.uuid4())
 
     async def complete_decision_episode(
         self,
@@ -201,21 +189,9 @@ class PgEpisodicStore:
         outcome: str,
         prediction_delta: float | None = None,
         early_reextraction_flag: bool = False,
-    ) -> uuid.UUID | None:
-        if not self._pool:
-            raise RuntimeError("PgEpisodicStore: PostgreSQL pool not initialized — call connect() with a real DSN")
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """UPDATE decision_episodes
-                   SET outcome = $1, prediction_delta = $2,
-                       early_reextraction_flag = $3, completed_at = now()
-                   WHERE decision_id = $4::uuid
-                   RETURNING episode_id""",
-                outcome, prediction_delta, early_reextraction_flag, str(decision_id),
-            )
-            if row:
-                return row["episode_id"]
-            return None
+    ) -> str | None:
+        """Stub — v0 uses SQLite EpisodicStore for decision episodes."""
+        return None
 
     async def fetch_decision_episodes_since(
         self,

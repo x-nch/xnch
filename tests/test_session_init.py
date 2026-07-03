@@ -38,6 +38,10 @@ def mock_app_state():
     state.get_state_version = AsyncMock(return_value="v1.0.0")
     state.get_policy_version = AsyncMock(return_value="v1.0.0")
     
+    working_memory = MagicMock()
+    working_memory.append_turn = AsyncMock(return_value=None)
+    state.working_memory = working_memory
+    
     return state
 
 

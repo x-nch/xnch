@@ -55,11 +55,20 @@ async def _fire_nexi_callback(
     episode_id: str | None,
     app,
 ) -> None:
+    outcome_score_predicted = 0.5
+    if episode_id:
+        ep = await app.episodic.get_episode(episode_id)
+        if ep and ep.get("context_snapshot"):
+            import json
+            snap = json.loads(ep["context_snapshot"])
+            outcome_score_predicted = snap.get("outcome_score_predicted", 0.5)
+
     payload = {
         "execution_ref": body.execution_ref,
         "decision_id": body.decision_id,
         "episode_id": episode_id,
         "outcome_status": body.outcome_status,
+        "outcome_score_predicted": outcome_score_predicted,
         "trace_id": body.decision_id,
     }
     try:

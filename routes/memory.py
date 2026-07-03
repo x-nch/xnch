@@ -100,7 +100,7 @@ async def memory_write(body: MemoryWriteRequest, request: Request) -> dict[str, 
 
         if early_flag:
             import asyncio
-            asyncio.create_task(app.pattern_extractor.run_early())
+            asyncio.create_task(app.pattern_extractor.run())
 
         return {"status": "ok", "episode_id": episode_id}
 
@@ -108,12 +108,18 @@ async def memory_write(body: MemoryWriteRequest, request: Request) -> dict[str, 
 
 
 def _format_episode(ep: dict) -> dict:
+    duration_ms = None
+    created = ep.get("created_at")
+    completed = ep.get("completed_at")
+    if created and completed:
+        duration_ms = int((float(completed) - float(created)) * 1000)
     return {
         "episode_id": ep.get("episode_id"),
         "action_type": ep.get("action_type"),
         "entity_class": ep.get("entity_class"),
         "outcome": ep.get("outcome"),
-        "created_at": _unix_to_iso(ep.get("created_at")),
+        "duration_ms": duration_ms,
+        "created_at": _unix_to_iso(created),
     }
 
 

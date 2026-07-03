@@ -16,7 +16,7 @@ from .policy import PolicyLoader, PolicyEngine
 from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
-    nexi_gateway_router,
+    nexi_gateway_router, chat_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,6 +130,7 @@ app.include_router(execution_router)
 app.include_router(governance_router)
 app.include_router(auth_router)
 app.include_router(nexi_gateway_router)
+app.include_router(chat_router)
 
 
 @app.get("/health")

@@ -124,6 +124,20 @@ async def verdict(body: VerdictRequest, request: Request) -> dict[str, Any]:
         trace_id=ctx.get("session_id", ""),
     )
 
+    await app.episodic.create_episode(
+        decision_id=body.request_id,
+        intent_class=body.action.get("intent_class", ""),
+        action_type=body.action.get("type", ""),
+        entity_class=body.action.get("entity_class", ""),
+        actor_role=resolved.role,
+        context_snapshot={
+            "session_id": ctx.get("session_id", ""),
+            "actor_id": resolved.id,
+            "outcome_score_predicted": ctx.get("outcome_score_predicted", 0.5),
+        },
+        generation_path="MODEL",
+    )
+
     return {
         "request_id": body.request_id,
         "verdict": result.verdict,
