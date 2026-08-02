@@ -199,6 +199,46 @@ class PgEpisodicStore:
             )
         return [_episode_row(r) for r in rows]
 
+    async def fetch_episodes_for_decay(self, limit: int = 5000) -> list[dict[str, Any]]:
+        if not self._pool:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT id, type, raw_text, summary, importance, recall_count,
+                          last_recalled, timestamp, decay_score, archived
+                   FROM episodes
+                   WHERE archived = FALSE
+                   ORDER BY timestamp DESC
+                   LIMIT $1""",
+                limit,
+            )
+        return [_episode_row(r) for r in rows]
+
+    async def has_episode_of_type(self, type_: str) -> bool:
+        if not self._pool:
+            return False
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT 1 FROM episodes WHERE type = $1 LIMIT 1", type_
+            )
+        return bool(row)
+
+    async def apply_decay(
+        self,
+        id: str,
+        decay_score: float,
+        archived: bool,
+    ) -> None:
+        if not self._pool:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE episodes
+                   SET decay_score = $2, archived = $3
+                   WHERE id = $1""",
+                id, decay_score, archived,
+            )
+
     # ------------------------------------------------------------------ #
     # Decision episodes (exact-match learning loop)
     # ------------------------------------------------------------------ #
@@ -253,9 +293,25 @@ class PgEpisodicStore:
                    SET outcome = $1, prediction_delta = $2,
                        early_reextraction_flag = $3, completed_at = now()
                    WHERE episode_id = $4""",
-                outcome, prediction_delta, early_reextraction_flag, episode_id,
+                 outcome, prediction_delta, early_reextraction_flag, episode_id,
             )
         return episode_id
+
+    async def write_prediction_update(
+        self,
+        episode_id: str,
+        prediction_delta: float,
+        early_reextraction_flag: bool,
+    ) -> None:
+        if not self._pool:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE decision_episodes
+                   SET prediction_delta = $2, early_reextraction_flag = $3
+                   WHERE episode_id = $1""",
+                episode_id, prediction_delta, early_reextraction_flag,
+            )
 
     async def fetch_decision_episodes_since(
         self,

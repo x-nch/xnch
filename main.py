@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     # Layer 1 — Working memory (Redis session context)
     s.working_memory = WorkingMemory(settings.redis_url)
 
-    # Layer 3 — Graph store (agentmemory semantic graph)
+    # Layer 3 — Graph store (Kuzu semantic graph)
     s.relationship_store = RelationshipStore(settings.postgres_url)
     await s.relationship_store.connect()
     s.graph_store = GraphStore(db_path=settings.db_path, relationship_store=s.relationship_store)

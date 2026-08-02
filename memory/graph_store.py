@@ -123,6 +123,30 @@ class GraphStore:
             "metadata": {"entity_id": eid, "name": ename, "type": etype},
         }
 
+    def fetch_entities(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return the most recently created entities (name for system prompts)."""
+        if self._conn is None:
+            return []
+        with self._lock:
+            result = self._conn.execute(
+                """MATCH (e:entities)
+                   RETURN e.entity_id, e.name, e.type
+                   ORDER BY e.created_at DESC
+                   LIMIT $limit""",
+                {"limit": limit},
+            )
+            entities = []
+            while result.has_next():
+                eid, ename, etype = result.get_next()
+                entities.append(
+                    {
+                        "id": eid,
+                        "document": ename,
+                        "metadata": {"entity_id": eid, "name": ename, "type": etype},
+                    }
+                )
+        return entities
+
     # ------------------------------------------------------------------ #
     # Relations
     # ------------------------------------------------------------------ #

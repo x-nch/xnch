@@ -284,3 +284,40 @@ async def test_no_pool_guards():
     s = PgEpisodicStore("postgresql://localhost:5432/xnch")
     assert await s.list_recent() == []
     assert await s.fetch_patterns_for_manifest("A", "B", "C") == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_episodes_for_decay(store, conn):
+    conn.fetch = AsyncMock(return_value=[_row(type="episode")])
+    results = await store.fetch_episodes_for_decay(limit=500)
+    assert len(results) == 1
+    assert conn.fetch.call_args[0][1] == 500
+    assert "archived = FALSE" in conn.fetch.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_apply_decay(store, conn):
+    await store.apply_decay("e1", 0.05, True)
+    sql, *rest = conn.execute.call_args[0]
+    assert "UPDATE episodes" in sql
+    assert rest[0] == "e1"
+    assert rest[1] == 0.05
+    assert rest[2] is True
+
+
+@pytest.mark.asyncio
+async def test_has_episode_of_type(store, conn):
+    conn.fetchval = AsyncMock(return_value=1)
+    assert await store.has_episode_of_type("identity") is True
+    conn.fetchval = AsyncMock(return_value=None)
+    assert await store.has_episode_of_type("identity") is False
+
+
+@pytest.mark.asyncio
+async def test_write_prediction_update(store, conn):
+    await store.write_prediction_update("ep-9", 0.02, True)
+    sql, episode_id, delta, flag = conn.execute.call_args[0]
+    assert "UPDATE decision_episodes" in sql
+    assert episode_id == "ep-9"
+    assert delta == 0.02
+    assert flag is True

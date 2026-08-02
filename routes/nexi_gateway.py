@@ -67,8 +67,7 @@ async def get_system_prompt(request: Request) -> str:
     if cached:
         return cached
 
-    from agentmemory import get_memories
-    entities = get_memories("entities", n_results=20)
+    entities = app.graph_store.fetch_entities(limit=20) if hasattr(app, "graph_store") else []
     recent_entities = [e.get("document", "") for e in entities if e.get("document")]
 
     prompt = build_system_prompt(session_memory=[], recent_entities=recent_entities)

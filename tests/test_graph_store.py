@@ -129,5 +129,13 @@ def test_no_connect_guards(tmp_path: Path) -> None:
     g = GraphStore(tmp_path / "graph")
     assert g.get_entity_by_name("x") is None
     assert g.query_entity_connections("x") == []
+    assert g.fetch_entities(limit=5) == []
     g.upsert_entity(id="1", name="n", type_="t")
     g.close()
+
+
+def test_fetch_entities_orders_by_recency(store) -> None:
+    for i in range(5):
+        store.upsert_entity(id=f"e{i}", name=f"entity{i}", type_="svc")
+    entities = store.fetch_entities(limit=3)
+    assert [e["document"] for e in entities] == ["entity4", "entity3", "entity2"]

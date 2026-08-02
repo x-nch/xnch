@@ -38,7 +38,7 @@ async def memory_read(body: MemoryReadRequest, request: Request) -> dict[str, An
     max_episodes = q.get("max_episodes", 20)
     max_patterns = q.get("max_patterns", 10)
 
-    episodes = await app.episodic.fetch_for_manifest(
+    episodes = await app.pg_episodic.fetch_for_manifest(
         intent_class=intent_class,
         entity_class=entity_class,
         actor_role=actor_role,
@@ -46,7 +46,7 @@ async def memory_read(body: MemoryReadRequest, request: Request) -> dict[str, An
         max_episodes=max_episodes,
     )
 
-    patterns = await app.pattern_store.fetch_for_manifest(
+    patterns = await app.pg_episodic.fetch_patterns_for_manifest(
         intent_class=intent_class,
         entity_class=entity_class,
         actor_role=actor_role,
@@ -90,7 +90,7 @@ async def memory_write(body: MemoryWriteRequest, request: Request) -> dict[str, 
         if not episode_id:
             raise HTTPException(status_code=422, detail="episode_id required")
 
-        await app.episodic.write_prediction_update(episode_id, prediction_delta, early_flag)
+        await app.pg_episodic.write_prediction_update(episode_id, prediction_delta, early_flag)
 
         app.event_log.emit(
             body.session_id, "xnch.memory", "PREDICTION_UPDATE_WRITTEN",

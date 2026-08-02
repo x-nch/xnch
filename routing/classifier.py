@@ -1,6 +1,80 @@
-from dataclasses import dataclass
+"""LiteLLM routing classifier with a Redis exact-match cache.
 
-from agentmemory import create_memory, search_memory
+Replaces the agentmemory/ChromaDB routing-decisions cache. Decisions are
+keyed on the normalized raw input so repeated requests are served from
+Redis without an LLM lookup.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+import redis
+
+from xnch.config import settings
+
+logger = logging.getLogger(__name__)
+
+_ROUTING_CACHE_TTL_S = 7 * 86400
+_cache: redis.Redis | None = None
+
+
+def _get_redis() -> redis.Redis | None:
+    global _cache
+    if _cache is None:
+        try:
+            _cache = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        except Exception as exc:
+            logger.warning("Routing cache unavailable: %s", exc)
+            _cache = None
+    return _cache
+
+
+def _cache_key(raw_input: str) -> str:
+    digest = hashlib.sha256(raw_input.lower().strip().encode("utf-8")).hexdigest()
+    return f"xnch:routing:{digest}"
+
+
+def _cache_lookup(raw_input: str) -> ModelRoute | None:
+    client = _get_redis()
+    if client is None:
+        return None
+    try:
+        raw = client.get(_cache_key(raw_input))
+        if not raw:
+            return None
+        parsed = json.loads(raw)
+        return ModelRoute(
+            model_name=parsed["model_name"],
+            reason=f"recalled: {parsed['reason']}",
+        )
+    except Exception as exc:
+        logger.warning("Routing cache lookup failed: %s", exc)
+        return None
+
+
+def _cache_store(raw_input: str, route: ModelRoute, actor_role: str, metadata: dict) -> None:
+    client = _get_redis()
+    if client is None:
+        return
+    try:
+        client.set(
+            _cache_key(raw_input),
+            json.dumps({
+                "raw_input": raw_input,
+                "actor_role": actor_role,
+                "intent_class": metadata.get("intent_class", ""),
+                "model_name": route.model_name,
+                "reason": route.reason,
+            }),
+            ex=_ROUTING_CACHE_TTL_S,
+        )
+    except Exception as exc:
+        logger.warning("Routing cache store failed: %s", exc)
 
 
 def _compute_complexity(raw_input: str, metadata: dict) -> float:
@@ -19,35 +93,16 @@ class ModelRoute:
 
 
 def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRoute:
-    try:
-        similar = search_memory(
-            "routing-decisions",
-            raw_input,
-            n_results=3,
-            include_embeddings=False,
-        )
-        for item in similar:
-            mem = item["document"] if isinstance(item, dict) else str(item)
-            if isinstance(mem, str):
-                try:
-                    import json as _json
-                    parsed = _json.loads(mem)
-                    if parsed.get("raw_input", "").lower().strip() == raw_input.lower().strip():
-                        return ModelRoute(
-                            model_name=parsed["model_name"],
-                            reason=f"recalled: {parsed['reason']}",
-                        )
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    cached = _cache_lookup(raw_input)
+    if cached is not None:
+        return cached
 
     if metadata.get("privacy_sensitive"):
         route = ModelRoute(
             model_name="ornith",
             reason="privacy_sensitive: routed to local model",
         )
-        _persist_route(raw_input, actor_role, metadata, route)
+        _cache_store(raw_input, route, actor_role, metadata)
         return route
 
     intent_class = metadata.get("intent_class", "")
@@ -58,7 +113,7 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
             model_name="ornith",
             reason="intent_class=EXECUTION: routed to local model for low-latency execution",
         )
-        _persist_route(raw_input, actor_role, metadata, route)
+        _cache_store(raw_input, route, actor_role, metadata)
         return route
 
     if intent_class == "DECISION":
@@ -68,32 +123,12 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
                 model_name="ornith",
                 reason=f"intent_class=DECISION complexity={complexity_score:.2f}: routed to ornith",
             )
-            _persist_route(raw_input, actor_role, metadata, route)
+            _cache_store(raw_input, route, actor_role, metadata)
             return route
 
     route = ModelRoute(
         model_name="ornith",
         reason="default route: ornith",
     )
-    _persist_route(raw_input, actor_role, metadata, route)
+    _cache_store(raw_input, route, actor_role, metadata)
     return route
-
-
-def _persist_route(raw_input: str, actor_role: str, metadata: dict, route: ModelRoute) -> None:
-    import json as _json
-    try:
-        create_memory(
-            "routing-decisions",
-            _json.dumps({
-                "raw_input": raw_input,
-                "actor_role": actor_role,
-                "intent_class": metadata.get("intent_class", ""),
-                "complexity_score": metadata.get("complexity_score", 0.0),
-                "privacy_sensitive": metadata.get("privacy_sensitive", False),
-                "model_name": route.model_name,
-                "reason": route.reason,
-            }),
-            metadata={"model_name": route.model_name, "intent_class": metadata.get("intent_class", "")},
-        )
-    except Exception:
-        pass

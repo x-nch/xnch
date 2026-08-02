@@ -1,54 +1,59 @@
-"""Consolidation job — summarization, graph extraction, decay, archival.
-Uses agentmemory for all storage operations."""
+"""Consolidation job — graph extraction, decay, archival.
+
+Episodes live in Postgres; graph triples land in the Kuzu store.
+"""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
-
-from agentmemory import get_memories, update_memory
+from datetime import datetime, timezone
 
 from xnch.memory.graph_extractor import extract_and_store
-from xnch.memory.pg_episodic_store import CATEGORY as EPISODE_CATEGORY
+from xnch.memory.pg_episodic_store import PgEpisodicStore
 
 logger = logging.getLogger(__name__)
 
 
-async def run_consolidation(relationship_store=None) -> None:
+async def run_consolidation(pg_episodic=None, relationship_store=None) -> None:
     try:
-        await _zep_summarize()
+        own_store = pg_episodic is None
+        if pg_episodic is None:
+            pg_episodic = PgEpisodicStore()
+            await pg_episodic.connect()
+        try:
+            triples = await extract_and_store(
+                pg_episodic=pg_episodic, relationship_store=relationship_store
+            )
+            logger.info("Graph extraction: %d triples written", triples)
 
-        triples = await extract_and_store(relationship_store=relationship_store)
-        logger.info("Graph extraction: %d triples written", triples)
-
-        all_episodes = get_memories(EPISODE_CATEGORY, n_results=5000)
-        archived = _recompute_and_archive_decay(all_episodes)
-        logger.info("Consolidation complete — %d episodes archived", archived)
+            episodes = await pg_episodic.fetch_episodes_for_decay(limit=5000)
+            archived = await _recompute_and_archive_decay(pg_episodic, episodes)
+            logger.info("Consolidation complete — %d episodes archived", archived)
+        finally:
+            if own_store:
+                await pg_episodic.close()
     except Exception:
         logger.exception("Consolidation failed")
 
 
-async def _zep_summarize() -> None:
-    episodes = get_memories(EPISODE_CATEGORY, n_results=100)
-    logger.info("Zep summarization: %d episodes in window", len(episodes))
-
-
-def _recompute_and_archive_decay(all_episodes: list) -> int:
+async def _recompute_and_archive_decay(
+    store: PgEpisodicStore,
+    episodes: list[dict],
+) -> int:
     now = datetime.now(timezone.utc)
     archived = 0
-    for m in all_episodes:
-        meta = dict(m["metadata"])
+    for m in episodes:
         try:
-            ts = datetime.fromisoformat(meta.get("timestamp", now.isoformat()))
+            ts = datetime.fromisoformat(m.get("timestamp", now.isoformat()))
         except Exception:
             ts = now
         days = (now - ts).total_seconds() / 86400
-        importance = float(meta.get("importance", 1.0))
-        recall_count = int(meta.get("recall_count", 0))
+        importance = float(m.get("importance", 1.0))
+        recall_count = int(m.get("recall_count", 0))
         decay = importance * (2.718 ** (-0.1 * days)) * (1 + 0.1 * recall_count)
-        meta["decay_score"] = str(round(decay, 4))
-        if decay < 0.1 and meta.get("archived", "False") != "True":
-            meta["archived"] = "True"
+        decay_score = round(decay, 4)
+        should_archive = decay < 0.1 and not bool(m.get("archived", False))
+        if should_archive:
             archived += 1
-        update_memory(EPISODE_CATEGORY, m["id"], metadata=meta)
+        await store.apply_decay(m["id"], decay_score, bool(should_archive) or bool(m.get("archived", False)))
     return archived
