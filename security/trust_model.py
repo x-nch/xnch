@@ -17,8 +17,10 @@ class TrustLevel(enum.IntEnum):
 
 ACTOR_TRUST_MAP: dict[str, TrustLevel] = {
     "nexi": TrustLevel.SYSTEM,
-    "openclaw": TrustLevel.OWNER,
-    "claude_code": TrustLevel.TRUSTED_AGENT,
+    "admin": TrustLevel.OWNER,
+    "operator": TrustLevel.OWNER,
+    "agent": TrustLevel.TRUSTED_AGENT,
+    "viewer": TrustLevel.EXTERNAL_AGENT,
     "opencode": TrustLevel.TRUSTED_AGENT,
     "perception_daemon": TrustLevel.TRUSTED_AGENT,
     "consolidation_job": TrustLevel.TRUSTED_AGENT,

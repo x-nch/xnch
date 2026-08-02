@@ -30,7 +30,7 @@ LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
 class ChatRequest(BaseModel):
     session_id: str
     message: str
-    actor_role: str = "openclaw"
+    actor_role: str = "operator"
 
 
 class MemoryRecallRequest(BaseModel):

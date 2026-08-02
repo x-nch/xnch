@@ -44,7 +44,7 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
 
     if metadata.get("privacy_sensitive"):
         route = ModelRoute(
-            model_name="gemma4-local",
+            model_name="ornith",
             reason="privacy_sensitive: routed to local model",
         )
         _persist_route(raw_input, actor_role, metadata, route)
@@ -55,7 +55,7 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
 
     if intent_class == "EXECUTION":
         route = ModelRoute(
-            model_name="gemma4-local",
+            model_name="ornith",
             reason="intent_class=EXECUTION: routed to local model for low-latency execution",
         )
         _persist_route(raw_input, actor_role, metadata, route)
@@ -65,15 +65,15 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
         complexity_score = _compute_complexity(raw_input, metadata)
         if complexity_score > 0.7:
             route = ModelRoute(
-                model_name="claude-judgment",
-                reason=f"intent_class=DECISION complexity={complexity_score:.2f}: routed to cloud judgment model",
+                model_name="ornith",
+                reason=f"intent_class=DECISION complexity={complexity_score:.2f}: routed to ornith",
             )
             _persist_route(raw_input, actor_role, metadata, route)
             return route
 
     route = ModelRoute(
-        model_name="gemma4-local",
-        reason="default route: local model",
+        model_name="ornith",
+        reason="default route: ornith",
     )
     _persist_route(raw_input, actor_role, metadata, route)
     return route

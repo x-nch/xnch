@@ -1,19 +1,11 @@
 model_list:
-  - model_name: gemma4-local
+  - model_name: ornith
     litellm_params:
-      model: ollama/gemma4:26b
-      api_base: http://i9-node:11434
-  - model_name: claude-judgment
-    litellm_params:
-      model: anthropic/claude-sonnet-4-6
-  - model_name: phi3-encoder
-    litellm_params:
-      model: ollama/phi3:mini
-      api_base: http://i7-node:11434
+      model: openai/ornith-1.0-35b
+      api_base: http://192.168.50.2:8082/v1
+      api_key: xnch-vllm-key
 
 router_settings:
   routing_strategy: usage-based-routing
-  fallbacks:
-    - "gemma4-local": ["claude-judgment"]
   allowed_fails: 3
   num_retries: 2

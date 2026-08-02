@@ -24,8 +24,8 @@ def _claims() -> ExecutionTokenClaims:
         session_id=uuid4(),
         decision_id=uuid4(),
         trace_id=uuid4(),
-        actor_id="openclaw",
-        actor_role="openclaw",
+        actor_id="operator",
+        actor_role="operator",
         action_type="DEPLOY",
         entity_class="ML_MODEL",
         policy_version="v1.0",
@@ -72,7 +72,7 @@ def test_public_key_verifies(keypair):
     signer = TokenSigner(keypair.private_pem)
     token, _ = signer.issue(_claims())
     payload = jwt.decode(token, keypair.public_pem, algorithms=["RS256"])
-    assert payload["actor_role"] == "openclaw"
+    assert payload["actor_role"] == "operator"
 
 
 def test_wrong_key_rejected(tmp_path):

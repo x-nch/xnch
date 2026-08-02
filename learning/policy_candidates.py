@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _LLM_URL = settings.litellm_proxy_url.rstrip("/") + "/chat/completions"
 
-_LLM_MODEL = "claude-judgment"
+_LLM_MODEL = "ornith"
 _CANDIDATE_SYSTEM_PROMPT = """You are a policy engineer for the XNCH autonomous governance system.
 Given failure patterns, suggest policy rule candidates in XNCH policy DSL.
 
