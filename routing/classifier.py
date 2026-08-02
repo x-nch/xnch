@@ -19,6 +19,10 @@ from xnch.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Decision cache, not durable memory: Redis is the short-term tier by design
+# (sensory/working; PG episodic + Kuzu graph are the durable tiers). A miss
+# re-runs the deterministic routing logic (no LLM call), so expiry is lossless
+# — this never had indefinite-retention semantics under agentmemory either.
 _ROUTING_CACHE_TTL_S = 7 * 86400
 _cache: redis.Redis | None = None
 
