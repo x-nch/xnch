@@ -124,14 +124,24 @@ class GraphStore:
         }
 
     def fetch_entities(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Return the most recently created entities (name for system prompts)."""
+        """Return the most recently created entities (name for system prompts).
+
+        Ordering is by created_at DESC (recency of creation), not insertion
+        order, because Kuzu reserves the internal column `_id` for system use:
+        referencing it raises "Binder exception: _id is reserved for system
+        usage. External access is not allowed." (0.11.3), and even the id(e)
+        accessor cannot be ordered by ("Order by INTERNAL_ID is not
+        supported"). created_at is microsecond-precision, so sequential writes
+        essentially never tie; entity_id (the PK) is added as a deterministic
+        tiebreaker so the LIMIT window is stable across calls.
+        """
         if self._conn is None:
             return []
         with self._lock:
             result = self._conn.execute(
                 """MATCH (e:entities)
                    RETURN e.entity_id, e.name, e.type
-                   ORDER BY e.created_at DESC
+                   ORDER BY e.created_at DESC, e.entity_id
                    LIMIT $limit""",
                 {"limit": limit},
             )

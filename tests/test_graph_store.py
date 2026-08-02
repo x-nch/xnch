@@ -139,3 +139,13 @@ def test_fetch_entities_orders_by_recency(store) -> None:
         store.upsert_entity(id=f"e{i}", name=f"entity{i}", type_="svc")
     entities = store.fetch_entities(limit=3)
     assert [e["document"] for e in entities] == ["entity4", "entity3", "entity2"]
+
+
+def test_fetch_entities_deterministic_tiebreak(store) -> None:
+    for eid in ("beta", "alpha", "gamma"):
+        store.upsert_entity(id=eid, name=f"entity-{eid}", type_="svc")
+    store._conn.execute("MATCH (e:entities) SET e.created_at = timestamp('2024-01-01T00:00:00')")
+    entities = store.fetch_entities(limit=10)
+    ids = [e["metadata"]["entity_id"] for e in entities]
+    assert ids == ["alpha", "beta", "gamma"]
+    assert store.fetch_entities(limit=10) == entities
