@@ -44,11 +44,16 @@ def _use_llama_cpp() -> bool:
         return False
 
 
-async def extract_and_store(pg_episodic=None, relationship_store=None) -> int:
+async def extract_and_store(
+    pg_episodic=None,
+    relationship_store=None,
+    graph_store: GraphStore | None = None,
+) -> int:
     own_store = pg_episodic is None
     if pg_episodic is None:
         pg_episodic = PgEpisodicStore()
         await pg_episodic.connect()
+    own_graph = graph_store is None
     try:
         episodes = await pg_episodic.retrieve_similar(top_k=100)
 
@@ -56,8 +61,9 @@ async def extract_and_store(pg_episodic=None, relationship_store=None) -> int:
             logger.info("No recent episodes to extract from")
             return 0
 
-        graph = GraphStore(relationship_store=relationship_store)
-        graph.connect()
+        graph = graph_store or GraphStore(relationship_store=relationship_store)
+        if own_graph:
+            graph.connect()
         try:
             triples_written = 0
             for ep in episodes:
@@ -89,7 +95,8 @@ async def extract_and_store(pg_episodic=None, relationship_store=None) -> int:
             logger.info("Wrote %d triples from %d episodes", triples_written, len(episodes))
             return triples_written
         finally:
-            graph.close()
+            if own_graph:
+                graph.close()
     finally:
         if own_store:
             await pg_episodic.close()
@@ -97,9 +104,11 @@ async def extract_and_store(pg_episodic=None, relationship_store=None) -> int:
 
 async def _extract_triples(text: str) -> list[dict[str, Any]]:
     if _use_llama_cpp():
-        return await _extract_llama_cpp(text)
-    else:
-        return await _extract_ollama(text)
+        result = await _extract_llama_cpp(text)
+        if result:
+            return result
+        logger.warning("llama.cpp returned no triples, trying LiteLLM")
+    return await _extract_litellm(text)
 
 
 def _normalize_triple(t: Any) -> dict[str, Any] | None:
@@ -135,6 +144,38 @@ def _normalize_entity(e: Any) -> dict[str, str] | None:
             "type": str(e.get("type") or "entity"),
         }
     return None
+
+
+async def _extract_litellm(text: str) -> list[dict[str, Any]]:
+    """Extract triples via LiteLLM proxy (ornith on Node B)."""
+    try:
+        import os
+
+        from xnch.config import settings as xnch_settings
+
+        api_key = os.environ.get("LITELLM_MASTER_KEY", "")
+        api_base = xnch_settings.litellm_proxy_url.rstrip("/")
+        resp = await litellm.acompletion(
+            model="ornith",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an entity-relation extractor. Return valid JSON only.",
+                },
+                {"role": "user", "content": _EXTRACTION_PROMPT.format(raw_text=text)},
+            ],
+            api_base=api_base,
+            api_key=api_key,
+            temperature=0.1,
+            max_tokens=1024,
+        )
+        content = resp.choices[0].message.content.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        return json.loads(content)
+    except Exception:
+        logger.exception("LiteLLM extraction failed for episode text")
+        return []
 
 
 async def _extract_ollama(text: str) -> list[dict[str, Any]]:

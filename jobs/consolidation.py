@@ -14,7 +14,11 @@ from xnch.memory.pg_episodic_store import PgEpisodicStore
 logger = logging.getLogger(__name__)
 
 
-async def run_consolidation(pg_episodic=None, relationship_store=None) -> None:
+async def run_consolidation(
+    pg_episodic=None,
+    relationship_store=None,
+    graph_store=None,
+) -> None:
     try:
         own_store = pg_episodic is None
         if pg_episodic is None:
@@ -22,7 +26,9 @@ async def run_consolidation(pg_episodic=None, relationship_store=None) -> None:
             await pg_episodic.connect()
         try:
             triples = await extract_and_store(
-                pg_episodic=pg_episodic, relationship_store=relationship_store
+                pg_episodic=pg_episodic,
+                relationship_store=relationship_store,
+                graph_store=graph_store,
             )
             logger.info("Graph extraction: %d triples written", triples)
 

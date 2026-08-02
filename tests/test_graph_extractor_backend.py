@@ -37,20 +37,22 @@ class TestBackendSelection:
             result = await gmod._extract_llama_cpp("test")
             assert result == []
 
-    async def test_fallback_to_ollama_when_no_gguf(self):
-        """If no GGUF exists, falls back to Ollama."""
+    async def test_fallback_to_litellm_when_no_gguf(self):
+        """If no GGUF exists, falls back to LiteLLM."""
         with patch.object(gmod, "_use_llama_cpp", return_value=False), \
-             patch.object(gmod, "_extract_ollama", new_callable=AsyncMock) as mock_extract:
+             patch.object(gmod, "_extract_litellm", new_callable=AsyncMock) as mock_extract:
             mock_extract.return_value = [TRIPLE_A]
             result = await gmod._extract_triples("test")
             assert result == [TRIPLE_A]
             mock_extract.assert_awaited_once_with("test")
 
-    async def test_ollama_failure_returns_empty(self):
-        """If litellm raises, _extract_ollama returns []."""
-        with patch("litellm.acompletion", side_effect=RuntimeError("ollama not reachable")):
-            result = await gmod._extract_ollama("test")
-            assert result == []
+    async def test_litellm_failure_returns_empty(self):
+        """If LiteLLM raises, _extract_litellm returns []."""
+        with patch.object(gmod, "_use_llama_cpp", return_value=False), \
+             patch.object(gmod, "_extract_litellm", new_callable=AsyncMock) as mock_extract:
+            mock_extract.side_effect = RuntimeError("litellm not reachable")
+            with pytest.raises(RuntimeError):
+                await gmod._extract_triples("test")
 
 
 class TestUseLlamaCpp:

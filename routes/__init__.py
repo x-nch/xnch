@@ -1,3 +1,4 @@
+from .admin import router as admin_router
 from .session import router as session_router
 from .memory import router as memory_router
 from .policy import router as policy_router
@@ -11,5 +12,5 @@ from .chat import router as chat_router
 __all__ = [
     "session_router", "memory_router", "policy_router",
     "verdict_router", "execution_router", "governance_router",
-    "auth_router", "nexi_gateway_router", "chat_router",
+    "auth_router", "nexi_gateway_router", "chat_router", "admin_router",
 ]

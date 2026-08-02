@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from nexi.character.prompt_loader import build_system_prompt
 from nexi.pipeline.context_assembler import assemble_context
 from nexi.proactivity.engine import ProactivityEngine
+from xnch.config import settings
 from xnch.routing.classifier import classify_request
 from xnch.security.injection_guard import scan_input
 from xnch.security.memory_guard import validate_memory_write
@@ -23,8 +24,8 @@ router = APIRouter(prefix="/nexi", tags=["nexi"])
 SYSTEM_PROMPT_CACHE_KEY = "nexi:system-prompt"
 SYSTEM_PROMPT_CACHE_TTL = 60
 
-LITELLM_BASE = os.environ.get("LITELLM_BASE_URL", "http://i7-node:4000")
-LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
+LITELLM_BASE = os.environ.get("LITELLM_BASE_URL", settings.litellm_proxy_url)
+LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", os.environ.get("LITELLM_MASTER_KEY", ""))
 
 
 class ChatRequest(BaseModel):

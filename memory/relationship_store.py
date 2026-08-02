@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import asyncpg
@@ -25,6 +25,10 @@ class RelationshipStore:
 
     async def connect(self) -> None:
         self._pool = await asyncpg.create_pool(self._dsn, min_size=1, max_size=5)
+        migration = Path(__file__).parent / "migrations" / "002_relationship_memory.sql"
+        if migration.exists():
+            async with self._pool.acquire() as conn:
+                await conn.execute(migration.read_text())
 
     async def close(self) -> None:
         if self._pool:

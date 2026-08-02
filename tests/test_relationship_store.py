@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -100,8 +101,14 @@ async def test_get_relationship_strength_no_pool():
 
 @pytest.mark.asyncio
 async def test_connect_creates_pool():
-    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool:
-        mock_pool.return_value = AsyncMock()
+    mock_conn = AsyncMock()
+    mock_pool_obj = MagicMock()
+    mock_pool_obj.acquire.return_value.__aenter__.return_value = mock_conn
+    mock_pool_obj.acquire.return_value.__aexit__.return_value = None
+    mock_pool_obj.close = AsyncMock()
+    with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool, \
+         patch.object(Path, "exists", return_value=False):
+        mock_pool.return_value = mock_pool_obj
         s = RelationshipStore("postgresql://localhost:5432/xnch")
         await s.connect()
         mock_pool.assert_called_once_with(
