@@ -1,9 +1,9 @@
-"""Tests for GraphStore with mocked agentmemory."""
+"""Tests for the Kuzu-backed GraphStore (real embedded graph)."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,94 +18,116 @@ def store(tmp_path: Path) -> GraphStore:
     g.close()
 
 
-MOCK_ENTITY = {
-    "id": "svc-1",
-    "document": "api-gateway",
-    "metadata": {"entity_id": "svc-1", "name": "api-gateway", "type": "service"},
-    "embedding": None,
-}
-
-
 def test_upsert_entity(store):
-    with patch("xnch.memory.graph_store.search_memory") as mock_sm:
-        mock_sm.return_value = []
-        with patch("xnch.memory.graph_store.create_memory") as mock_cm:
-            store.upsert_entity(id="svc-1", name="api-gateway", type_="service")
-    mock_cm.assert_called_once()
-    args, kwargs = mock_cm.call_args
-    assert args[0] == "entities"
-    assert args[1] == "api-gateway"
-    assert kwargs["metadata"]["type"] == "service"
+    store.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    ent = store.get_entity_by_name("api-gateway")
+    assert ent is not None
+    assert ent["metadata"]["entity_id"] == "svc-1"
+    assert ent["metadata"]["type"] == "service"
 
 
 def test_upsert_entity_update(store):
-    with patch("xnch.memory.graph_store.search_memory") as mock_sm:
-        mock_sm.return_value = [MOCK_ENTITY]
-        with patch("xnch.memory.graph_store.update_memory") as mock_um:
-            store.upsert_entity(id="svc-1", name="api-gateway-v2", type_="service")
-    mock_um.assert_called_once()
+    store.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    store.upsert_entity(id="svc-1", name="api-gateway-v2", type_="service")
+    ent = store.get_entity_by_name("api-gateway-v2")
+    assert ent is not None
+    assert ent["metadata"]["entity_id"] == "svc-1"
+    assert store.get_entity_by_name("api-gateway") is None
 
 
 def test_get_entity_by_name(store):
-    with patch("xnch.memory.graph_store.search_memory") as mock_sm:
-        mock_sm.return_value = [MOCK_ENTITY]
-        entity = store.get_entity_by_name("api-gateway")
+    store.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    entity = store.get_entity_by_name("api-gateway")
     assert entity is not None
     assert entity["document"] == "api-gateway"
+    assert entity["metadata"]["entity_id"] == "svc-1"
+
+
+def test_get_entity_by_name_case_insensitive(store):
+    store.upsert_entity(id="svc-1", name="PaymentsService", type_="service")
+    assert store.get_entity_by_name("paymentsservice") is not None
 
 
 def test_get_entity_by_name_missing(store):
-    with patch("xnch.memory.graph_store.search_memory") as mock_sm:
-        mock_sm.return_value = []
-        entity = store.get_entity_by_name("does-not-exist")
-    assert entity is None
+    assert store.get_entity_by_name("does-not-exist") is None
 
 
 @pytest.mark.asyncio
 async def test_upsert_relation(store):
-    with patch("xnch.memory.graph_store.search_memory") as mock_sm:
-        mock_sm.return_value = []
-        with patch("xnch.memory.graph_store.create_memory") as mock_cm:
-            await store.upsert_relation(from_id="usr-1", to_id="svc-1", rel_type="accessed", confidence=0.9)
-        mock_cm.assert_called_once()
-        args, kwargs = mock_cm.call_args
-        assert "usr-1" in args[1]
-        assert kwargs["metadata"]["rel_type"] == "accessed"
-
-
-def test_query_entity_connections(store):
-    mock_rels = [
-        {
-            "id": "r1",
-            "document": "usr-1 accessed svc-1",
-            "metadata": {"from_id": "usr-1", "to_id": "svc-1", "rel_type": "accessed", "confidence": "0.9"},
-        }
-    ]
-    mock_entities = [
-        {
-            "id": "svc-1",
-            "document": "api-gateway",
-            "metadata": {"entity_id": "svc-1", "name": "api-gateway", "type": "service"},
-        }
-    ]
-    with (
-        patch("xnch.memory.graph_store.get_memories") as mock_gm,
-        patch.object(store, "_get_entity_direct", return_value=mock_entities[0]),
-    ):
-        mock_gm.return_value = mock_rels
-        connections = store.query_entity_connections("usr-1")
+    store.upsert_entity(id="usr-1", name="alice", type_="user")
+    store.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    await store.upsert_relation(from_id="usr-1", to_id="svc-1", rel_type="accessed", confidence=0.9)
+    connections = store.query_entity_connections("usr-1")
     assert len(connections) == 1
     assert connections[0]["connected_name"] == "api-gateway"
     assert connections[0]["rel_type"] == "accessed"
+    assert connections[0]["confidence"] == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_upsert_relation_updates_confidence(store):
+    store.upsert_entity(id="usr-1", name="alice", type_="user")
+    store.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    await store.upsert_relation(from_id="usr-1", to_id="svc-1", rel_type="accessed", confidence=0.9)
+    await store.upsert_relation(from_id="usr-1", to_id="svc-1", rel_type="accessed", confidence=0.95)
+    connections = store.query_entity_connections("usr-1")
+    assert len(connections) == 1
+    assert connections[0]["confidence"] == pytest.approx(0.95)
+
+
+@pytest.mark.asyncio
+async def test_upsert_relation_syncs_relationship_store(store, tmp_path):
+    rel_store = AsyncMock()
+    g = GraphStore(tmp_path / "rel-sync-test", relationship_store=rel_store)
+    g.connect()
+    g.upsert_entity(id="usr-1", name="alice", type_="user")
+    g.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    try:
+        await g.upsert_relation(from_id="usr-1", to_id="svc-1", rel_type="accessed", confidence=0.9)
+    finally:
+        g.close()
+    rel_store.upsert_relationship.assert_awaited_once()
+    _, kwargs = rel_store.upsert_relationship.call_args
+    assert kwargs["entity_a"] == "usr-1"
+    assert kwargs["entity_b"] == "svc-1"
+    assert kwargs["strength"] == 0.9
+
+
+def test_query_entity_connections_both_directions(store):
+    store.upsert_entity(id="usr-1", name="alice", type_="user")
+    store.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    store.upsert_entity(id="svc-2", name="auth-gateway", type_="service")
+    import asyncio
+
+    async def _seed():
+        await store.upsert_relation(from_id="usr-1", to_id="svc-1", rel_type="accessed", confidence=0.9)
+        await store.upsert_relation(from_id="svc-2", to_id="usr-1", rel_type="monitored_by", confidence=0.6)
+
+    asyncio.run(_seed())
+    connections = store.query_entity_connections("usr-1")
+    assert len(connections) == 2
+    rel_types = {c["rel_type"] for c in connections}
+    assert rel_types == {"accessed", "monitored_by"}
+
+
+def test_query_entity_connections_empty(store):
+    assert store.query_entity_connections("ghost") == []
 
 
 def test_db_path_isolation(tmp_path: Path) -> None:
-    path_a = tmp_path / "graph_a"
-    path_b = tmp_path / "graph_b"
-    ga = GraphStore(path_a)
+    ga = GraphStore(tmp_path / "graph_a")
+    gb = GraphStore(tmp_path / "graph_b")
     ga.connect()
-    gb = GraphStore(path_b)
     gb.connect()
-    assert ga._path != gb._path
+    ga.upsert_entity(id="svc-1", name="api-gateway", type_="service")
+    assert gb.get_entity_by_name("api-gateway") is None
     ga.close()
     gb.close()
+
+
+def test_no_connect_guards(tmp_path: Path) -> None:
+    g = GraphStore(tmp_path / "graph")
+    assert g.get_entity_by_name("x") is None
+    assert g.query_entity_connections("x") == []
+    g.upsert_entity(id="1", name="n", type_="t")
+    g.close()

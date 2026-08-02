@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     nexi_base_url: str = "http://localhost:8000"
 
     # PostgreSQL / pgvector
-    postgres_url: str = "postgresql://localhost:5432/xnch"
+    postgres_url: str = "postgresql://xnch:cf00d3e9a10c400f9083b424b94f0cf7@localhost:5432/xnch"
 
     # Learning
     pattern_min_observations: int = 10

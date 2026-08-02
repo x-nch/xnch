@@ -1,15 +1,41 @@
-"""Semantic graph store — Layer 3 memory backed by agentmemory categories."""
+"""Semantic graph store — Layer 4 memory backed by Kuzu (embedded property graph).
+
+Replaces the agentmemory/ChromaDB-backed graph store. Entities and typed
+relations live in a Kuzu database (single-file, in-process, synchronous),
+so the store keeps the same interface used by the pipeline:
+get_entity_by_name / query_entity_connections / upsert_entity / upsert_relation.
+"""
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
-from agentmemory import create_memory, search_memory, get_memories, update_memory
+import kuzu
 
+from xnch.config import settings
 
 ENTITIES_CATEGORY = "entities"
 RELATIONS_CATEGORY = "relations"
+
+_GRAPH_DIR = "graph.kuzu"
+
+_SCHEMA = """
+CREATE NODE TABLE IF NOT EXISTS entities (
+    entity_id STRING PRIMARY KEY,
+    name STRING,
+    type STRING,
+    created_at TIMESTAMP DEFAULT current_timestamp()
+);
+
+CREATE REL TABLE IF NOT EXISTS relations (
+    FROM entities TO entities,
+    rel_type STRING,
+    confidence DOUBLE,
+    created_at TIMESTAMP DEFAULT current_timestamp()
+);
+"""
 
 
 class GraphStore:
@@ -18,32 +44,88 @@ class GraphStore:
         db_path: Path | None = None,
         relationship_store: Any | None = None,
     ) -> None:
-        self._path = db_path
         self._relationship_store = relationship_store
+        if db_path is None:
+            self._dir = settings.base_dir / _GRAPH_DIR
+        else:
+            p = Path(db_path)
+            self._dir = (p.parent if p.suffix else p) / _GRAPH_DIR
+        self._db: kuzu.Database | None = None
+        self._conn: kuzu.Connection | None = None
+        self._lock = threading.Lock()
 
     def connect(self) -> None:
-        pass
+        self._dir.parent.mkdir(parents=True, exist_ok=True)
+        self._db = kuzu.Database(str(self._dir))
+        self._conn = kuzu.Connection(self._db)
+        self._conn.execute(_SCHEMA)
 
     def close(self) -> None:
-        pass
+        with self._lock:
+            self._conn = None
+            self._db = None
+
+    # ------------------------------------------------------------------ #
+    # Entities
+    # ------------------------------------------------------------------ #
 
     def upsert_entity(self, id: str, name: str, type_: str) -> None:
-        existing = search_memory(ENTITIES_CATEGORY, name, n_results=5)
-        match = next(
-            (e for e in existing if e["metadata"].get("entity_id") == id),
-            None,
-        )
-        if match:
-            update_memory(
-                ENTITIES_CATEGORY, match["id"],
-                metadata={"entity_id": id, "name": name, "type": type_},
+        if self._conn is None:
+            return
+        with self._lock:
+            self._conn.execute(
+                """MERGE (e:entities {entity_id: $id})
+                   ON CREATE SET e.name = $name, e.type = $type
+                   ON MATCH SET e.name = $name, e.type = $type""",
+                {"id": id, "name": name, "type": type_},
             )
-        else:
-            create_memory(
-                ENTITIES_CATEGORY, name,
-                id=id,
-                metadata={"entity_id": id, "name": name, "type": type_},
+
+    def get_entity_by_name(self, name: str) -> dict[str, Any] | None:
+        if self._conn is None:
+            return None
+        with self._lock:
+            result = self._conn.execute(
+                """MATCH (e:entities)
+                   WHERE lower(e.name) = lower($name)
+                   RETURN e.entity_id, e.name, e.type
+                   LIMIT 1""",
+                {"name": name},
             )
+            if not result.has_next():
+                return None
+            entity_id, entity_name, entity_type = result.get_next()
+        return {
+            "id": entity_id,
+            "document": entity_name,
+            "metadata": {
+                "entity_id": entity_id,
+                "name": entity_name,
+                "type": entity_type,
+            },
+        }
+
+    def _get_entity_direct(self, entity_id: str) -> dict[str, Any] | None:
+        if self._conn is None:
+            return None
+        with self._lock:
+            result = self._conn.execute(
+                """MATCH (e:entities {entity_id: $id})
+                   RETURN e.entity_id, e.name, e.type
+                   LIMIT 1""",
+                {"id": entity_id},
+            )
+            if not result.has_next():
+                return None
+            eid, ename, etype = result.get_next()
+        return {
+            "id": eid,
+            "document": ename,
+            "metadata": {"entity_id": eid, "name": ename, "type": etype},
+        }
+
+    # ------------------------------------------------------------------ #
+    # Relations
+    # ------------------------------------------------------------------ #
 
     async def upsert_relation(
         self,
@@ -52,31 +134,26 @@ class GraphStore:
         rel_type: str,
         confidence: float,
     ) -> None:
-        rel_text = f"{from_id} {rel_type} {to_id}"
-        existing = search_memory(RELATIONS_CATEGORY, rel_text, n_results=5)
-        match = next(
-            (r for r in existing
-             if r["metadata"].get("from_id") == from_id
-             and r["metadata"].get("to_id") == to_id
-             and r["metadata"].get("rel_type") == rel_type),
-            None,
-        )
-        if match:
-            update_memory(
-                RELATIONS_CATEGORY, match["id"],
-                metadata={
-                    "from_id": from_id, "to_id": to_id,
-                    "rel_type": rel_type, "confidence": str(confidence),
-                },
+        if self._conn is None:
+            return
+        with self._lock:
+            exists = self._conn.execute(
+                """MATCH (a:entities {entity_id: $f})-[r:relations {rel_type: $rt}]->(b:entities {entity_id: $t})
+                   RETURN r.confidence""",
+                {"f": from_id, "rt": rel_type, "t": to_id},
             )
-        else:
-            create_memory(
-                RELATIONS_CATEGORY, rel_text,
-                metadata={
-                    "from_id": from_id, "to_id": to_id,
-                    "rel_type": rel_type, "confidence": str(confidence),
-                },
-            )
+            if exists.has_next():
+                self._conn.execute(
+                    """MATCH (a:entities {entity_id: $f})-[r:relations {rel_type: $rt}]->(b:entities {entity_id: $t})
+                       SET r.confidence = $c""",
+                    {"f": from_id, "rt": rel_type, "t": to_id, "c": float(confidence)},
+                )
+            else:
+                self._conn.execute(
+                    """MATCH (a:entities {entity_id: $f}), (b:entities {entity_id: $t})
+                       CREATE (a)-[:relations {rel_type: $rt, confidence: $c}]->(b)""",
+                    {"f": from_id, "rt": rel_type, "t": to_id, "c": float(confidence)},
+                )
         if self._relationship_store is not None:
             await self._relationship_store.upsert_relationship(
                 entity_a=from_id,
@@ -87,29 +164,22 @@ class GraphStore:
             )
 
     def query_entity_connections(self, entity_id: str) -> list[dict[str, Any]]:
-        all_rel = get_memories(RELATIONS_CATEGORY, n_results=5000)
-        rows = []
-        for r in all_rel:
-            meta = r["metadata"]
-            if meta.get("from_id") == entity_id or meta.get("to_id") == entity_id:
-                other_id = meta["to_id"] if meta["from_id"] == entity_id else meta["from_id"]
-                entity = self._get_entity_direct(other_id)
+        if self._conn is None:
+            return []
+        with self._lock:
+            result = self._conn.execute(
+                """MATCH (a:entities {entity_id: $id})-[r:relations]-(o:entities)
+                   RETURN o.entity_id, o.name, o.type, r.rel_type, r.confidence""",
+                {"id": entity_id},
+            )
+            rows = []
+            while result.has_next():
+                connected_id, connected_name, connected_type, rel_type, confidence = result.get_next()
                 rows.append({
-                    "connected_id": other_id,
-                    "connected_name": entity["metadata"].get("name", other_id) if entity else other_id,
-                    "connected_type": entity["metadata"].get("type", "") if entity else "",
-                    "rel_type": meta.get("rel_type", ""),
-                    "confidence": float(meta.get("confidence", 0.0)),
+                    "connected_id": connected_id,
+                    "connected_name": connected_name,
+                    "connected_type": connected_type,
+                    "rel_type": rel_type,
+                    "confidence": float(confidence),
                 })
         return rows
-
-    def get_entity_by_name(self, name: str) -> dict[str, Any] | None:
-        results = search_memory(ENTITIES_CATEGORY, name, n_results=3)
-        for r in results:
-            if r["document"].lower() == name.lower():
-                return r
-        return results[0] if results else None
-
-    def _get_entity_direct(self, entity_id: str) -> dict | None:
-        results = get_memories(ENTITIES_CATEGORY, filter_metadata={"entity_id": entity_id}, n_results=1)
-        return results[0] if results else None
