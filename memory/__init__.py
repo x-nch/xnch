@@ -1,4 +1,8 @@
 from .db import init_db
+from ._chroma_compat import _apply as _apply_chroma_compat
+
+_apply_chroma_compat()
+
 from .episodic_store import EpisodicStore
 from .pattern_store import PatternStore
 from .kv_cache import KVCache

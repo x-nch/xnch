@@ -23,6 +23,7 @@ dependencies = [
     "agentmemory>=0.4.8",
     "pluggy>=1.6.0",
     "litellm>=1.89.4",
+    "llama-cpp-python>=0.2.90",
 ]
 
 [project.optional-dependencies]
