@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
-from nexi.character.prompt_loader import build_system_prompt
+from nexi.character.prompt_loader import build_system_prompt, load_capabilities
 from nexi.pipeline.context_assembler import assemble_context
 from nexi.proactivity.engine import ProactivityEngine
 from xnch.config import settings
@@ -71,9 +71,16 @@ async def get_system_prompt(request: Request) -> str:
     entities = app.graph_store.fetch_entities(limit=20) if hasattr(app, "graph_store") else []
     recent_entities = [e.get("document", "") for e in entities if e.get("document")]
 
-    prompt = build_system_prompt(session_memory=[], recent_entities=recent_entities)
+    prompt = build_system_prompt(
+        session_memory=[], recent_entities=recent_entities, include_capabilities=True
+    )
     await redis.set(SYSTEM_PROMPT_CACHE_KEY, prompt, ex=SYSTEM_PROMPT_CACHE_TTL)
     return prompt
+
+
+@router.get("/capabilities")
+async def get_capabilities() -> dict[str, Any]:
+    return load_capabilities()
 
 
 @router.post("/chat")
