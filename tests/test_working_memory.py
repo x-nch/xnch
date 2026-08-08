@@ -88,6 +88,20 @@ async def test_append_turn(wm):
 
 
 @pytest.mark.asyncio
+async def test_append_turn_sets_ttl(wm):
+    await wm.append_turn("sess-TTL", "user", "hi")
+    ttl = await wm._redis.ttl("session:sess-TTL:turns")
+    assert 0 < ttl <= 86400
+
+
+@pytest.mark.asyncio
+async def test_append_turn_custom_ttl(wm):
+    await wm.append_turn("sess-TTL2", "user", "hi", ttl=60)
+    ttl = await wm._redis.ttl("session:sess-TTL2:turns")
+    assert 0 < ttl <= 60
+
+
+@pytest.mark.asyncio
 async def test_get_turns_last_n(wm):
     for i in range(10):
         await wm.append_turn("sess-D", "user", f"msg-{i}")

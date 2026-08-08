@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from nexi.pipeline.context_assembler import assemble_context
 from nexi.proactivity.engine import ProactivityEngine
 from xnch.config import settings
 from xnch.routing.classifier import classify_request
+from xnch.routing.response_sanitize import strip_thinking
 from xnch.security.injection_guard import scan_input
 from xnch.security.memory_guard import validate_memory_write
 from xnch.security.trust_model import get_trust_level
@@ -23,6 +25,17 @@ router = APIRouter(prefix="/nexi", tags=["nexi"])
 
 SYSTEM_PROMPT_CACHE_KEY = "nexi:system-prompt"
 SYSTEM_PROMPT_CACHE_TTL = 60
+
+# Mirrors cli/util.py parse_recall_intent so "recall memory <q>" routes to memory
+# retrieval instead of the model fixating on the literal message.
+_RECALL_RE = re.compile(
+    r"^\s*(?:/recall|recall memory|memory recall)\s+(.+?)\s*$", re.IGNORECASE
+)
+
+
+def _recall_query(text: str) -> str | None:
+    match = _RECALL_RE.match(text)
+    return match.group(1) if match else None
 
 LITELLM_BASE = os.environ.get("LITELLM_BASE_URL", settings.litellm_proxy_url)
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", os.environ.get("LITELLM_MASTER_KEY", ""))
@@ -44,6 +57,15 @@ def _get_proactivity(app) -> ProactivityEngine:
         redis = app.kv_cache.redis_client
         app._nexi_proactivity = ProactivityEngine(redis)
     return app._nexi_proactivity
+
+
+async def _agent_lessons_for_chat(app: Any, message: str) -> list[str]:
+    if not settings.am_prefetch_enabled:
+        return []
+    from xnch.memory.agentmemory_prefetch import prefetch_agent_lessons
+
+    query = _recall_query(message) or message
+    return await prefetch_agent_lessons(app, query)
 
 
 async def _safe_redis_delete(redis, key: str) -> None:
@@ -93,6 +115,8 @@ async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
         relationship_store=app.relationship_store,
         sensory_buffer=app.sensory_buffer,
         proactivity_engine=_get_proactivity(app),
+        recall_query=_recall_query(body.message),
+        agent_lessons=await _agent_lessons_for_chat(app, body.message),
     )
 
     route = classify_request(body.message, body.actor_role, {})
@@ -101,20 +125,16 @@ async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
 
     await app.working_memory.append_turn(body.session_id, "user", body.message)
 
+    from xnch_mcp.chat_tools import chat_with_tools
+
     try:
-        async with httpx.AsyncClient(base_url=LITELLM_BASE, timeout=120.0) as client:
-            resp = await client.post(
-                "/chat/completions",
-                json={
-                    "model": model_name,
-                    "messages": messages,
-                    "max_tokens": 2048,
-                    "temperature": 0.7,
-                },
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"} if LITELLM_API_KEY else {},
-            )
-            resp.raise_for_status()
-            response_text = resp.json()["choices"][0]["message"]["content"]
+        response_text = await chat_with_tools(
+            app,
+            messages,
+            model_name,
+            session_id=body.session_id,
+            actor_role="nexi",
+        )
     except Exception as exc:
         logger.error("LiteLLM call failed: %s", exc)
         raise HTTPException(status_code=502, detail="LiteLLM unavailable")
@@ -129,11 +149,13 @@ async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
     )
     if not validation[0]:
         logger.warning("Memory write blocked by guard: %s", validation[1])
+    elif await app.pg_episodic.has_identical_recent(episode_text, hours=24):
+        logger.info("Skipping duplicate episode store for session %s", body.session_id)
     else:
         await app.pg_episodic.store_episode(
             type_="conversation",
             raw_text=episode_text,
-            summary=f"OpenClaw chat: {body.message[:100]}",
+            summary=f"{body.message[:80]} → {response_text[:120]}",
         )
 
     _invalidate_system_prompt_cache(app)
@@ -162,6 +184,8 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
         relationship_store=app.relationship_store,
         sensory_buffer=app.sensory_buffer,
         proactivity_engine=_get_proactivity(app),
+        recall_query=_recall_query(body.message),
+        agent_lessons=await _agent_lessons_for_chat(app, body.message),
     )
 
     route = classify_request(body.message, body.actor_role, {})
@@ -171,44 +195,24 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
     await app.working_memory.append_turn(body.session_id, "user", body.message)
 
     async def event_stream():
-        full_text = ""
+        from xnch_mcp.chat_tools import chat_with_tools
+
         try:
-            async with httpx.AsyncClient(base_url=LITELLM_BASE, timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    "/chat/completions",
-                    json={
-                        "model": model_name,
-                        "messages": messages,
-                        "max_tokens": 2048,
-                        "temperature": 0.7,
-                        "stream": True,
-                    },
-                    headers={"Authorization": f"Bearer {LITELLM_API_KEY}"} if LITELLM_API_KEY else {},
-                ) as resp:
-                    if resp.status_code != 200:
-                        yield f"data: {json.dumps({'error': f'LiteLLM error {resp.status_code}'})}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        payload = line.removeprefix("data: ")
-                        if payload == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(payload)
-                            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                            if delta:
-                                full_text += delta
-                                yield f"data: {json.dumps({'content': delta})}\n\n"
-                        except json.JSONDecodeError:
-                            continue
+            full_text = await chat_with_tools(
+                app,
+                messages,
+                model_name,
+                session_id=body.session_id,
+                actor_role="nexi",
+            )
         except Exception as exc:
-            logger.error("LiteLLM stream failed: %s", exc)
+            logger.error("LiteLLM stream/tool loop failed: %s", exc)
             yield f"data: {json.dumps({'error': 'LiteLLM unavailable'})}\n\n"
             yield "data: [DONE]\n\n"
             return
+
+        if full_text:
+            yield f"data: {json.dumps({'content': full_text})}\n\n"
 
         await app.working_memory.append_turn(body.session_id, "assistant", full_text)
         episode_text = f"{body.message}\n{full_text}"
@@ -217,11 +221,13 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
             actor_role=body.actor_role,
             trust_level=get_trust_level(body.actor_role),
         )
-        if validation[0]:
+        if validation[0] and await app.pg_episodic.has_identical_recent(episode_text, hours=24):
+            logger.info("Skipping duplicate episode store for session %s", body.session_id)
+        elif validation[0]:
             await app.pg_episodic.store_episode(
                 type_="conversation",
                 raw_text=episode_text,
-                summary=f"OpenClaw chat: {body.message[:100]}",
+                summary=f"{body.message[:80]} → {full_text[:120]}",
             )
         else:
             logger.warning("Memory write blocked by guard: %s", validation[1])

@@ -18,6 +18,7 @@ from .routes import (
     verdict_router, execution_router, governance_router, auth_router,
     nexi_gateway_router, chat_router, admin_router,
 )
+from xnch_mcp.http_router import router as mcp_router
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +74,36 @@ async def lifespan(app: FastAPI):
     s.graph_store = GraphStore(db_path=settings.db_path, relationship_store=s.relationship_store)
     s.graph_store.connect()
 
-    # Cold-start seed identity memories on first boot
-    from nexi.character.cold_start_seeder import seed_identity_memories
-    await seed_identity_memories(s.pg_episodic)
+    from xnch_mcp.fs.service import FsReadService
+
+    s.fs_read_service = FsReadService.from_settings(settings)
+
+    from xnch_mcp.exec.service import ExecRunService
+
+    s.exec_run_service = ExecRunService.from_settings(settings)
+
+    from xnch_mcp.web.service import WebSearchService
+
+    s.web_search_service = WebSearchService.from_settings(settings)
+
+    from xnch_mcp.bridge import McpBridgePool, set_bridge_pool
+
+    s.mcp_bridge = None
+    if settings.mcp_bridge_enabled and settings.mcp_servers_path.is_file():
+        bridge = McpBridgePool.from_path(settings.mcp_servers_path)
+        await bridge.start()
+        set_bridge_pool(bridge)
+        s.mcp_bridge = bridge
+        logger.info(
+            "MCP bridge active: %d tools from %d servers",
+            len(bridge.all_tools()),
+            len(bridge.server_status()),
+        )
+
+    # Cold-start / sync identity memories from nexi_character.yaml
+    from nexi.character.cold_start_seeder import sync_identity_memories
+
+    await sync_identity_memories(s.pg_episodic)
 
     # Learning
     s.pattern_extractor = PatternExtractor(s.pg_episodic, s.pattern_store)
@@ -111,6 +139,10 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if s.mcp_bridge is not None:
+        await s.mcp_bridge.stop()
+        set_bridge_pool(None)
+
     scheduler.shutdown(wait=False)
     await s.kv_cache.aclose()
     await s.sensory_buffer.aclose()
@@ -132,6 +164,7 @@ app.include_router(auth_router)
 app.include_router(nexi_gateway_router)
 app.include_router(chat_router)
 app.include_router(admin_router)
+app.include_router(mcp_router)
 
 
 @app.get("/health")

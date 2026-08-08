@@ -73,7 +73,9 @@ class WorkingMemory:
         if keys:
             await self._redis.delete(*keys)
 
-    async def append_turn(self, session_id: str, role: str, content: str) -> None:
+    async def append_turn(
+        self, session_id: str, role: str, content: str, ttl: int = 86400
+    ) -> None:
         turn_key = f"session:{session_id}:turns"
         turn = json.dumps({
             "role": role,
@@ -81,6 +83,7 @@ class WorkingMemory:
             "timestamp": time.time(),
         })
         await self._redis.rpush(turn_key, turn)
+        await self._redis.expire(turn_key, ttl)
 
     async def get_turns(
         self, session_id: str, last_n: int = 20

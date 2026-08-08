@@ -23,6 +23,8 @@ dependencies = [
     "pluggy>=1.6.0",
     "litellm>=1.89.4",
     "llama-cpp-python>=0.2.90",
+    "mcp>=1.0",
+    "anyio>=4.0",
 ]
 
 [project.optional-dependencies]

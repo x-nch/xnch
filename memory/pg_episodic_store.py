@@ -223,6 +223,36 @@ class PgEpisodicStore:
             )
         return bool(row)
 
+    async def fetch_by_type(
+        self, type_: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        if not self._pool:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT id, type, raw_text, summary, importance, recall_count,
+                          last_recalled, timestamp, decay_score, archived
+                   FROM episodes
+                   WHERE type = $1 AND archived = FALSE
+                   ORDER BY timestamp DESC
+                   LIMIT $2""",
+                type_, limit,
+            )
+        return [_episode_row(r) for r in rows]
+
+    async def has_identical_recent(self, raw_text: str, hours: int = 24) -> bool:
+        if not self._pool:
+            return False
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchval(
+                """SELECT 1 FROM episodes
+                   WHERE raw_text = $1 AND timestamp >= $2
+                   LIMIT 1""",
+                raw_text, cutoff,
+            )
+        return bool(row)
+
     async def apply_decay(
         self,
         id: str,

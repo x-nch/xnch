@@ -16,3 +16,15 @@ async def consolidate(request: Request) -> dict:
         graph_store=app.graph_store,
     )
     return {"status": "ok"}
+
+
+@router.post("/reseed-identity")
+async def reseed_identity(request: Request) -> dict:
+    """Sync identity facts from nexi_character.yaml into pgvector."""
+    from nexi.character.cold_start_seeder import sync_identity_memories
+    from xnch.routes.nexi_gateway import _invalidate_system_prompt_cache
+
+    app = request.app.state
+    added = await sync_identity_memories(app.pg_episodic)
+    _invalidate_system_prompt_cache(app)
+    return {"status": "ok", "added": added}
