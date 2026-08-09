@@ -103,5 +103,21 @@ class Settings(BaseSettings):
     memory_routing_policy_path: Path = Path("~/.xnch/memory-routing.yaml").expanduser()
     am_prefetch_enabled: bool = False
 
+    # Voice (STT + TTS on gate7 CPU)
+    voice_enabled: bool = True
+    voice_stt_model: str = "base"
+    voice_stt_device: str = "cpu"
+    voice_stt_compute_type: str = "int8"
+    voice_stt_language: str = "en"
+    voice_tts_engine: str = "piper"
+    voice_tts_voice_path: Path = Path("~/.xnch/voice/en_US-lessac-medium.onnx").expanduser()
+    voice_tts_config_path: Path = Path(
+        "~/.xnch/voice/en_US-lessac-medium.onnx.json"
+    ).expanduser()
+    voice_max_audio_duration_s: float = 60.0
+    voice_max_audio_bytes: int = 10_485_760
+    voice_max_tts_chars: int = 2000
+    voice_models_dir: Path = Path("~/.xnch/voice/models").expanduser()
+
 
 settings = Settings()

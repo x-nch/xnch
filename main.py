@@ -16,7 +16,7 @@ from .policy import PolicyLoader, PolicyEngine
 from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
-    nexi_gateway_router, chat_router, admin_router,
+    nexi_gateway_router, chat_router, admin_router, voice_router,
 )
 from xnch_mcp.http_router import router as mcp_router
 
@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
             len(bridge.server_status()),
         )
 
-    # Cold-start / sync identity memories from nexi_character.yaml
+    # Cold-start / sync identity memories from identity_facts.yaml
     from nexi.character.cold_start_seeder import sync_identity_memories
 
     await sync_identity_memories(s.pg_episodic)
@@ -164,6 +164,7 @@ app.include_router(auth_router)
 app.include_router(nexi_gateway_router)
 app.include_router(chat_router)
 app.include_router(admin_router)
+app.include_router(voice_router)
 app.include_router(mcp_router)
 
 

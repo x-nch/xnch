@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import re
 from typing import Any
 from uuid import uuid4
 
@@ -10,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
-from nexi.character.prompt_loader import build_system_prompt
+from nexi.character.prompt_loader import build_system_prompt, load_capabilities
 from nexi.pipeline.context_assembler import assemble_context
 from nexi.proactivity.engine import ProactivityEngine
 from xnch.config import settings
@@ -26,16 +25,7 @@ router = APIRouter(prefix="/nexi", tags=["nexi"])
 SYSTEM_PROMPT_CACHE_KEY = "nexi:system-prompt"
 SYSTEM_PROMPT_CACHE_TTL = 60
 
-# Mirrors cli/util.py parse_recall_intent so "recall memory <q>" routes to memory
-# retrieval instead of the model fixating on the literal message.
-_RECALL_RE = re.compile(
-    r"^\s*(?:/recall|recall memory|memory recall)\s+(.+?)\s*$", re.IGNORECASE
-)
-
-
-def _recall_query(text: str) -> str | None:
-    match = _RECALL_RE.match(text)
-    return match.group(1) if match else None
+from xnch.routing.recall_intent import recall_query as _recall_query
 
 LITELLM_BASE = os.environ.get("LITELLM_BASE_URL", settings.litellm_proxy_url)
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", os.environ.get("LITELLM_MASTER_KEY", ""))
@@ -93,9 +83,16 @@ async def get_system_prompt(request: Request) -> str:
     entities = app.graph_store.fetch_entities(limit=20) if hasattr(app, "graph_store") else []
     recent_entities = [e.get("document", "") for e in entities if e.get("document")]
 
-    prompt = build_system_prompt(session_memory=[], recent_entities=recent_entities)
+    prompt = build_system_prompt(
+        session_memory=[], recent_entities=recent_entities, include_capabilities=True
+    )
     await redis.set(SYSTEM_PROMPT_CACHE_KEY, prompt, ex=SYSTEM_PROMPT_CACHE_TTL)
     return prompt
+
+
+@router.get("/capabilities")
+async def get_capabilities() -> dict[str, Any]:
+    return load_capabilities()
 
 
 @router.post("/chat")
