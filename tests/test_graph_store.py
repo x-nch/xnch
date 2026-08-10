@@ -149,3 +149,40 @@ def test_fetch_entities_deterministic_tiebreak(store) -> None:
     ids = [e["metadata"]["entity_id"] for e in entities]
     assert ids == ["alpha", "beta", "gamma"]
     assert store.fetch_entities(limit=10) == entities
+
+
+def test_list_entities_and_count(store) -> None:
+    store.upsert_entity(id="a1", name="Alice", type_="person")
+    store.upsert_entity(id="a2", name="Bob", type_="person")
+    store.upsert_entity(id="s1", name="api", type_="service")
+    assert store.count_entities() == 3
+    assert store.count_entities(type_filter="person") == 2
+    listed = store.list_entities(search="ali", limit=10)
+    assert len(listed) == 1
+    assert listed[0]["name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_list_relations_and_subgraph(store) -> None:
+    store.upsert_entity(id="u1", name="alice", type_="user")
+    store.upsert_entity(id="s1", name="api", type_="service")
+    store.upsert_entity(id="s2", name="db", type_="service")
+    await store.upsert_relation("u1", "s1", "uses", 0.9)
+    await store.upsert_relation("s1", "s2", "depends_on", 0.7)
+    assert store.count_relations() == 2
+    rels = store.list_relations(limit=10)
+    assert len(rels) == 2
+    sub = store.get_subgraph("u1", depth=2)
+    assert len(sub["entities"]) == 3
+    assert len(sub["relations"]) == 2
+
+
+def test_get_stats(store) -> None:
+    store.upsert_entity(id="e1", name="one", type_="concept")
+    store.upsert_entity(id="e2", name="two", type_="concept")
+    store.upsert_entity(id="e3", name="three", type_="service")
+    stats = store.get_stats()
+    assert stats["entity_count"] == 3
+    assert stats["relation_count"] == 0
+    assert stats["types"]["concept"] == 2
+    assert stats["types"]["service"] == 1

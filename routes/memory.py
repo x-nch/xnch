@@ -1,14 +1,61 @@
 """Steps 4 & 14: memory/read and memory/write."""
+import asyncio
+import json
 from typing import Any
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from xnch.security.actor_sandbox import get_capabilities
 
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+
+class GraphEntityResponse(BaseModel):
+    entity_id: str
+    name: str
+    type: str
+    created_at: str | None = None
+
+
+class GraphRelationResponse(BaseModel):
+    from_id: str
+    from_name: str | None = None
+    to_id: str
+    to_name: str | None = None
+    rel_type: str
+    confidence: float
+    created_at: str | None = None
+
+
+class GraphEntitiesPage(BaseModel):
+    entities: list[GraphEntityResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class GraphRelationsPage(BaseModel):
+    relations: list[GraphRelationResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class GraphSubgraphResponse(BaseModel):
+    center_id: str
+    depth: int
+    entities: list[GraphEntityResponse]
+    relations: list[GraphRelationResponse]
+
+
+class GraphStatsResponse(BaseModel):
+    entity_count: int
+    relation_count: int
+    types: dict[str, int] = Field(default_factory=dict)
 
 
 class MemoryReadRequest(BaseModel):
@@ -105,6 +152,119 @@ async def memory_write(body: MemoryWriteRequest, request: Request) -> dict[str, 
         return {"status": "ok", "episode_id": episode_id}
 
     raise HTTPException(status_code=400, detail=f"Unknown write_type: {body.write_type}")
+
+
+@router.get("/graph/stats", response_model=GraphStatsResponse)
+async def graph_stats(request: Request) -> GraphStatsResponse:
+    """Kuzu L3 graph summary — entity/relation counts and type distribution."""
+    stats = request.app.state.graph_store.get_stats()
+    return GraphStatsResponse(**stats)
+
+
+@router.get("/graph/entities", response_model=GraphEntitiesPage)
+async def graph_entities(
+    request: Request,
+    type: str | None = Query(default=None, description="Filter by entity type"),
+    search: str | None = Query(default=None, description="Substring match on name"),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> GraphEntitiesPage:
+    store = request.app.state.graph_store
+    entities = store.list_entities(
+        type_filter=type,
+        search=search,
+        limit=limit,
+        offset=offset,
+    )
+    total = store.count_entities(type_filter=type, search=search)
+    return GraphEntitiesPage(
+        entities=[GraphEntityResponse(**e) for e in entities],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/graph/relations", response_model=GraphRelationsPage)
+async def graph_relations(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> GraphRelationsPage:
+    store = request.app.state.graph_store
+    relations = store.list_relations(limit=limit, offset=offset)
+    total = store.count_relations()
+    return GraphRelationsPage(
+        relations=[GraphRelationResponse(**r) for r in relations],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/graph/subgraph", response_model=GraphSubgraphResponse)
+async def graph_subgraph(
+    request: Request,
+    entity_id: str = Query(..., min_length=1),
+    depth: int = Query(default=1, ge=1, le=2),
+) -> GraphSubgraphResponse:
+    store = request.app.state.graph_store
+    raw = store.get_subgraph(entity_id=entity_id, depth=depth)
+    return GraphSubgraphResponse(
+        center_id=raw["center_id"],
+        depth=raw["depth"],
+        entities=[GraphEntityResponse(**e) for e in raw["entities"]],
+        relations=[GraphRelationResponse(**r) for r in raw["relations"]],
+    )
+
+
+@router.get("/graph/stream")
+async def graph_stream(request: Request) -> StreamingResponse:
+    """SSE stream of Kuzu graph mutations and stats updates."""
+    app = request.app.state
+    store = app.graph_store
+    broadcaster = app.graph_broadcaster
+
+    async def event_stream():
+        stats = store.get_stats()
+        yield _sse({"type": "stats", **stats})
+        yield _sse({"type": "ready"})
+
+        queue = await broadcaster.subscribe()
+        last_stats = stats
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=2.5)
+                    yield _sse(event)
+                    if event.get("type") == "stats":
+                        last_stats = event
+                except asyncio.TimeoutError:
+                    current = store.get_stats()
+                    if (
+                        current["entity_count"] != last_stats.get("entity_count")
+                        or current["relation_count"] != last_stats.get("relation_count")
+                    ):
+                        last_stats = current
+                        yield _sse({"type": "stats", **current})
+                        yield _sse({"type": "sync"})
+                    yield _sse({"type": "heartbeat"})
+        finally:
+            broadcaster.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _sse(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, default=str)}\n\n"
 
 
 def _format_episode(ep: dict) -> dict:
