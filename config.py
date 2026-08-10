@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     session_ttl_s: int = 120
     rate_limit_per_minute: int = 10
 
+    # LangGraph decision pipeline
+    use_langgraph: bool = False
+    langgraph_use_postgres: bool = True
+
     # Nexi callback
     nexi_base_url: str = "http://localhost:8000"
 

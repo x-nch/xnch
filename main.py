@@ -16,7 +16,7 @@ from .policy import PolicyLoader, PolicyEngine
 from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
-    nexi_gateway_router, chat_router, admin_router, voice_router,
+    nexi_gateway_router, chat_router, admin_router, voice_router, decision_router,
 )
 from xnch_mcp.http_router import router as mcp_router
 
@@ -137,12 +137,48 @@ async def lifespan(app: FastAPI):
     s.event_log.emit("startup", "xnch", "SERVER_STARTED", data={"version": "0.1.0"})
     logger.info("xnch-server started")
 
+    # LangGraph decision pipeline
+    s.decision_graph = None
+    s.decision_runner = None
+    s.langgraph_checkpointer = None
+    if settings.use_langgraph:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        from .agents.pipeline_graph import create_pipeline
+        from .agents.runner import DecisionRunner, build_pipeline_deps
+
+        checkpointer = MemorySaver()
+        if settings.langgraph_use_postgres:
+            try:
+                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+                checkpointer = AsyncPostgresSaver.from_conn_string(settings.postgres_url)
+                await checkpointer.setup()
+                logger.info("LangGraph using AsyncPostgresSaver")
+            except Exception as exc:
+                logger.warning("Postgres checkpointer unavailable, using MemorySaver: %s", exc)
+                checkpointer = MemorySaver()
+
+        deps = build_pipeline_deps(s)
+        s.decision_graph = create_pipeline(deps=deps, checkpointer=checkpointer)
+        s.decision_runner = DecisionRunner(s.decision_graph, s)
+        s.langgraph_checkpointer = checkpointer
+        logger.info("LangGraph decision pipeline enabled")
+
     yield
 
     if s.mcp_bridge is not None:
         await s.mcp_bridge.stop()
         set_bridge_pool(None)
 
+    if s.langgraph_checkpointer is not None:
+        closer = getattr(s.langgraph_checkpointer, "aclose", None) or getattr(
+            s.langgraph_checkpointer, "close", None
+        )
+        if closer is not None:
+            result = closer()
+            if hasattr(result, "__await__"):
+                await result
     scheduler.shutdown(wait=False)
     await s.kv_cache.aclose()
     await s.sensory_buffer.aclose()
@@ -165,6 +201,7 @@ app.include_router(nexi_gateway_router)
 app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(voice_router)
+app.include_router(decision_router)
 app.include_router(mcp_router)
 
 
@@ -176,6 +213,7 @@ async def health(request: Request) -> dict:
         "status": "ok" if redis_ok else "degraded",
         "redis": "ok" if redis_ok else "unavailable",
         "state_version": state_version,
+        "langgraph": getattr(request.app.state, "decision_runner", None) is not None,
         "version": "0.1.0",
     }
 

@@ -28,6 +28,33 @@ class ClarifyRequest(BaseModel):
     amended_input: str
 
 
+async def _run_langgraph_session(
+    app,
+    session_context: dict[str, Any],
+    trace_id: str,
+) -> dict[str, Any]:
+    runner = app.decision_runner
+    if runner is None:
+        raise HTTPException(status_code=503, detail="LangGraph pipeline unavailable")
+
+    return await runner.run(
+        raw_input=session_context["raw_input"],
+        session_id=session_context["session_id"],
+        trace_id=trace_id,
+        actor=session_context["actor"],
+        system_state_version=session_context["system_state_version"],
+        policy_version=session_context["policy_version"],
+        idempotency_key=session_context["idempotency_key"],
+        priority=session_context["priority"],
+    )
+
+
+async def _forward_to_nexi(session_context: dict[str, Any]) -> dict[str, Any]:
+    async with httpx.AsyncClient(base_url=settings.nexi_base_url, timeout=120.0) as client:
+        resp = await client.post("/session/start", json=session_context)
+    return resp.json()
+
+
 @router.post("/init")
 async def session_init(body: SessionInitRequest, request: Request) -> dict[str, Any]:
     """Step 1-2: Transport validation, dedup check, actor resolution, then forward to Nexi."""
@@ -78,14 +105,18 @@ async def session_init(body: SessionInitRequest, request: Request) -> dict[str, 
     app.event_log.emit(trace_id, "xnch.session", "SESSION_CREATED",
                        data={"session_id": session_context["session_id"], "actor": actor_id})
 
-    # Forward to Nexi (Step 2 → Step 3)
+    # Forward to Nexi (Step 2 → Step 3) or run LangGraph pipeline
     try:
-        async with httpx.AsyncClient(base_url=settings.nexi_base_url, timeout=120.0) as client:
-            resp = await client.post("/session/start", json=session_context)
-        nexi_response = resp.json()
+        if settings.use_langgraph:
+            nexi_response = await _run_langgraph_session(app, session_context, trace_id)
+        else:
+            nexi_response = await _forward_to_nexi(session_context)
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("Nexi /session/start failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Nexi unavailable")
+        backend = "LangGraph" if settings.use_langgraph else "Nexi"
+        logger.error("%s session start failed: %s", backend, exc)
+        raise HTTPException(status_code=502, detail=f"{backend} unavailable")
 
     # Store conversation turn in working memory
     session_id = session_context["session_id"]
@@ -124,12 +155,20 @@ async def clarify(session_id: str, body: ClarifyRequest, request: Request) -> di
     session_context["raw_input"] = body.amended_input
 
     try:
-        async with httpx.AsyncClient(base_url=settings.nexi_base_url, timeout=120.0) as client:
-            resp = await client.post("/session/start", json=session_context)
-        nexi_response = resp.json()
+        if settings.use_langgraph:
+            nexi_response = await _run_langgraph_session(
+                app,
+                session_context,
+                session_context.get("trace_id", session_id),
+            )
+        else:
+            nexi_response = await _forward_to_nexi(session_context)
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error("Nexi /session/start failed: %s", exc)
-        raise HTTPException(status_code=502, detail="Nexi unavailable")
+        backend = "LangGraph" if settings.use_langgraph else "Nexi"
+        logger.error("%s clarify failed: %s", backend, exc)
+        raise HTTPException(status_code=502, detail=f"{backend} unavailable")
 
     # Append conversation turn
     await app.working_memory.append_turn(session_id, "user", body.amended_input)

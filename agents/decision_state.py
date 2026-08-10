@@ -46,10 +46,15 @@ class PlanOption(TypedDict):
     estimated_side_effects: list[str]
 
 
-class DecisionState(TypedDict):
+class DecisionState(TypedDict, total=False):
     raw_input: str
     session_id: str
     trace_id: str
+    actor: dict[str, Any]
+    system_state_version: str
+    policy_version: str
+    idempotency_key: str
+    priority: str
 
     intent: Intent
     context: AssembledContext
@@ -57,6 +62,8 @@ class DecisionState(TypedDict):
     policy_verdicts: list[PolicyVerdict]
     evaluated: list[EvaluatedOption]
     selected: PlanOption | None
+    decision_id: str | None
+    decision_record: dict[str, Any] | None
     compiled_plan: dict[str, Any] | None
 
     events: Annotated[list[dict[str, Any]], operator.add]
