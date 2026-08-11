@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     beeai_demo_mode: bool = False
     beeai_model: str = "ornith"
     beeai_api_key: str = "sk-local"
+    beeai_timeout_s: float = 60.0
+    beeai_max_iterations: int = 8
 
     # Graph extractor
     graph_extractor_model: str = "ollama/phi3:mini"

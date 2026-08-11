@@ -21,12 +21,13 @@ from __future__ import annotations
 from .backend import StaticChatModel, build_chat_model
 from .runtime import run_orchestrator, run_swarm, run_agent
 from .route import beeai_router
-from .tools import build_tools
+from .tools import build_framework_tools, build_tools
 
 __all__ = [
     "StaticChatModel",
     "beeai_router",
     "build_chat_model",
+    "build_framework_tools",
     "build_tools",
     "run_agent",
     "run_orchestrator",

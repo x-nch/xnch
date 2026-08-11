@@ -43,7 +43,12 @@ def build_swarm(
     approve: bool = False,
 ) -> AgentWorkflow:
     llm = llm or build_chat_model()
-    read_tools = [t for t in tools if t.name != "xnch_exec_run"]
+    # context_bee: read-only xnch tools + all framework tools (no exec)
+    read_tools = [
+        t
+        for t in tools
+        if getattr(t, "name", None) != "xnch_exec_run"
+    ]
 
     workflow = AgentWorkflow(name="xnch-swarm")
     workflow.add_agent(
@@ -51,8 +56,9 @@ def build_swarm(
             name="context_bee",
             role="context gatherer",
             instructions=(
-                "Gather context for the request using xnch_memory_recall and "
-                "xnch_web_search. Summarize what you found, then hand off to "
+                "Gather context using xnch_memory_recall, xnch_web_search, "
+                "DuckDuckGo, Wikipedia, xnch_status, and OpenMeteoTool as needed. "
+                "Use think to organize findings, summarize, then hand off to "
                 "planner_bee."
             ),
             tools=read_tools,
@@ -66,8 +72,9 @@ def build_swarm(
             role="decision planner",
             instructions=(
                 "Using the context provided by context_bee, propose a concrete "
-                "plan or answer. For mutating actions, request operator approval "
-                "explicitly — the policy gate will enforce it."
+                "plan or answer. You may use think, Wikipedia, DuckDuckGo, "
+                "OpenMeteoTool, and xnch tools. For mutating actions, request "
+                "operator approval explicitly — the policy gate will enforce it."
             ),
             tools=tools,
             llm=llm,

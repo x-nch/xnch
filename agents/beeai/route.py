@@ -9,9 +9,13 @@ already trusts. Mutation approval is operator-gated via ``X-BeeAI-Approval``.
 """
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
+from beeai_framework.agents.errors import AgentError
+from beeai_framework.backend.errors import ChatModelError
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -20,7 +24,9 @@ from ...memory.audit_store import emit_event
 from xnch_mcp.context import ActorContext
 
 from .backend import StaticChatModel
-from .runtime import run_agent, run_swarm
+from .runtime import BeeaiTimeoutError, run_agent, run_swarm
+
+logger = logging.getLogger(__name__)
 
 beeai_router = APIRouter(prefix="/beeai", tags=["beeai"])
 
@@ -53,6 +59,34 @@ def _ensure_enabled() -> None:
         raise HTTPException(status_code=404, detail="beeai engine disabled")
 
 
+async def _run_mapped(
+    runner: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Map beeAI runtime failures to stable HTTP errors (no unhandled 500s)."""
+    try:
+        return await runner()
+    except BeeaiTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except AgentError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "beeAI could not resolve the task within the iteration limit; "
+                "try a clearer prompt or raise XNCH_BEEAI_MAX_ITERATIONS"
+            ),
+        ) from exc
+    except ChatModelError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"beeAI LLM backend unavailable: {exc}",
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("beeAI run failed unexpectedly")
+        raise HTTPException(status_code=500, detail=f"beeAI run failed: {exc}") from exc
+
+
 @beeai_router.get("/health")
 async def beeai_health() -> dict[str, Any]:
     return {
@@ -61,6 +95,8 @@ async def beeai_health() -> dict[str, Any]:
         "enabled": settings.beeai_enabled,
         "demo_mode": settings.beeai_demo_mode,
         "model": settings.beeai_model,
+        "timeout_s": settings.beeai_timeout_s,
+        "max_iterations": settings.beeai_max_iterations,
     }
 
 
@@ -72,14 +108,18 @@ async def beeai_chat(body: BeeaiChatRequest, request: Request) -> BeeaiRunRespon
     approve = _approval_from_request(request)
     event_log = getattr(request.app.state, "event_log", None)
     llm = StaticChatModel() if settings.beeai_demo_mode else None
-    result = await run_agent(
-        body.message,
-        app_state=request.app.state,
-        actor=actor,
-        event_log=event_log,
-        approve=approve,
-        llm=llm,
-    )
+
+    async def _runner() -> dict[str, Any]:
+        return await run_agent(
+            body.message,
+            app_state=request.app.state,
+            actor=actor,
+            event_log=event_log,
+            approve=approve,
+            llm=llm,
+        )
+
+    result = await _run_mapped(_runner)
     emit_event(
         actor.trace_id,
         "xnch.beeai",
@@ -101,14 +141,18 @@ async def beeai_swarm(body: BeeaiChatRequest, request: Request) -> BeeaiRunRespo
     approve = _approval_from_request(request)
     event_log = getattr(request.app.state, "event_log", None)
     llm = StaticChatModel() if settings.beeai_demo_mode else None
-    result = await run_swarm(
-        body.message,
-        app_state=request.app.state,
-        actor=actor,
-        event_log=event_log,
-        approve=approve,
-        llm=llm,
-    )
+
+    async def _runner() -> dict[str, Any]:
+        return await run_swarm(
+            body.message,
+            app_state=request.app.state,
+            actor=actor,
+            event_log=event_log,
+            approve=approve,
+            llm=llm,
+        )
+
+    result = await _run_mapped(_runner)
     emit_event(
         actor.trace_id,
         "xnch.beeai",

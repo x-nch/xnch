@@ -1,24 +1,29 @@
-"""beeAI tools — thin wrappers over the xnch MCP tool registry.
+"""beeAI tools — xnch MCP wrappers + beeAI Framework built-ins.
 
-Instead of an HTTP loopback, the wrappers call ``invoke_tool`` in-process,
-which is the exact same code path as ``POST /mcp/call``: actor tier checks,
-bridge lookup, and audit events. The active app state / actor / event log are
-resolved from contextvars that ``xnch/agents/beeai/runtime.py`` sets before
-the agent runs, so a single module-level tool set works per-request.
+xnch tools call ``invoke_tool`` in-process (same path as ``POST /mcp/call``):
+actor tier checks, bridge lookup, and audit events. Request context is bound
+via contextvars in ``runtime.py``.
 
-Only tools an actor is actually allowed to call (``list_tools_for_actor``)
-are wired into the agent — the registry is the source of truth for gating.
+Framework tools from https://framework.beeai.dev/modules/tools are attached
+to *both* the orchestrator and the swarm (Think, OpenMeteo, Wikipedia,
+DuckDuckGo). Sandbox/FS/Shell built-ins stay out — xnch already gates those
+via MCP (``xnch_exec_run``, fs tools).
 """
 from __future__ import annotations
 
 import json
+import logging
 from contextvars import ContextVar
 from typing import Any
 
 from beeai_framework.tools import tool
+from beeai_framework.tools.think import ThinkTool
+from beeai_framework.tools.weather import OpenMeteoTool
 
 from xnch_mcp.context import ActorContext
 from xnch_mcp.registry import invoke_tool, list_tools_for_actor
+
+logger = logging.getLogger(__name__)
 
 _app_state_var: ContextVar[Any | None] = ContextVar("beeai_app_state", default=None)
 _actor_var: ContextVar[ActorContext | None] = ContextVar("beeai_actor", default=None)
@@ -99,16 +104,49 @@ _WRAPPED: dict[str, Any] = {
 # Tools that need explicit human approval on top of the policy gate.
 MUTATING_TOOLS = frozenset({"xnch_memory_store_note", "xnch_exec_run"})
 
+# Framework built-in names (for docs / filtering). Instantiated per build_tools call.
+FRAMEWORK_TOOL_NAMES = frozenset({"think", "OpenMeteoTool", "Wikipedia", "DuckDuckGo"})
+
+
+def build_framework_tools() -> list[Any]:
+    """Ready-to-use beeAI Framework tools (docs: /modules/tools).
+
+    Always includes Think + OpenMeteo. Wikipedia / DuckDuckGo are included when
+    their optional extras are installed (``beeai-framework[wikipedia,duckduckgo]``).
+    """
+    tools: list[Any] = [ThinkTool(), OpenMeteoTool()]
+
+    try:
+        from beeai_framework.tools.search.wikipedia import WikipediaTool
+
+        tools.append(WikipediaTool())
+    except Exception as exc:  # optional extra
+        logger.warning("WikipediaTool unavailable (install beeai-framework[wikipedia]): %s", exc)
+
+    try:
+        from beeai_framework.tools.search.duckduckgo import DuckDuckGoSearchTool
+
+        tools.append(DuckDuckGoSearchTool())
+    except Exception as exc:  # optional extra
+        logger.warning(
+            "DuckDuckGoSearchTool unavailable (install beeai-framework[duckduckgo]): %s",
+            exc,
+        )
+
+    return tools
+
 
 def build_tools(
     actor: ActorContext,
     app_state: Any | None = None,
     event_log: Any | None = None,
 ) -> list[Any]:
-    """Return the wrapped tools the actor is allowed to call (registry-gated).
+    """Return xnch MCP tools (registry-gated) + framework tools for agent *and* swarm.
 
     ``app_state``/``event_log`` are optional — they are only read at call time
     from the request context, so tests can build tools with a bare actor.
     """
+    del app_state, event_log  # bound via contextvars at call time
     allowed = {t.name for t in list_tools_for_actor(actor.actor_role)}
-    return [wrapped for name, wrapped in _WRAPPED.items() if name in allowed]
+    xnch_tools = [wrapped for name, wrapped in _WRAPPED.items() if name in allowed]
+    return [*xnch_tools, *build_framework_tools()]
