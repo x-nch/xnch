@@ -176,6 +176,12 @@ app.include_router(admin_router)
 app.include_router(voice_router)
 app.include_router(mcp_router)
 
+if settings.beeai_enabled:
+    from xnch.agents.beeai.route import beeai_router
+
+    app.include_router(beeai_router)
+    logger.info("beeAI orchestration router mounted (XNCH_BEEAI_ENABLED=true)")
+
 
 @app.get("/health")
 async def health(request: Request) -> dict:

@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # LiteLLM proxy
     litellm_proxy_url: str = "http://litellm:4000"
 
+    # beeAI orchestration (side-by-side, feature-flagged)
+    beeai_enabled: bool = False
+    beeai_demo_mode: bool = False
+    beeai_model: str = "ornith"
+    beeai_api_key: str = "sk-local"
+
     # Graph extractor
     graph_extractor_model: str = "ollama/phi3:mini"
 
