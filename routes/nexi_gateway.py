@@ -95,6 +95,24 @@ async def get_capabilities() -> dict[str, Any]:
     return load_capabilities()
 
 
+@router.get("/tools")
+async def get_tools() -> dict[str, Any]:
+    """Live tool inventory for the nexi actor (native + bridged), read-only."""
+    from xnch_mcp.bridge.pool import get_bridge_pool
+    from xnch_mcp.registry import list_openai_tools
+
+    tools = list_openai_tools("nexi")
+    pool = get_bridge_pool()
+    servers = pool.server_status() if pool is not None else []
+    return {
+        "tools": tools,
+        "bridge": {
+            "active": bool(pool is not None and pool.started),
+            "servers": servers,
+        },
+    }
+
+
 @router.post("/chat")
 async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
     app = request.app.state
