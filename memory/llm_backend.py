@@ -71,7 +71,7 @@ def _load_model() -> Any:
         return _MODEL_LOADED
 
     model_path = _resolve_model_path()
-    n_threads = max(1, __import__("os").cpu_count() // 2)
+    n_threads = min(max(1, __import__("os").cpu_count() // 2), 4)
 
     from llama_cpp import Llama
 

@@ -56,24 +56,27 @@ class TestBackendSelection:
 
 
 class TestUseLlamaCpp:
-    """Test the _use_llama_cpp backend-selection helper."""
+    """Test the _use_llama_cpp backend-selection helper.
 
-    def test_true_when_model_exists(self, tmp_path):
-        from xnch.memory import llm_backend
+    Selection is purely config-driven (XNCH_GRAPH_EXTRACTOR_MODEL prefixed
+    with ``llama_cpp/``); GGUF file presence alone must NOT switch backends.
+    """
 
-        model = tmp_path / "models" / "test.gguf"
-        model.parent.mkdir(parents=True)
-        model.write_bytes(b"\x00")
+    def _settings(self, model: str) -> MagicMock:
+        mock = MagicMock()
+        mock.graph_extractor_model = model
+        return mock
 
-        with patch("xnch.memory.graph_extractor.llm_backend") as mock_lb:
-            mock_lb._resolve_model_path.return_value = model
+    def test_true_when_config_prefix_llama_cpp(self):
+        with patch("xnch.memory.graph_extractor.settings", self._settings("llama_cpp/qwen2.5-0.5b.gguf")):
             assert gmod._use_llama_cpp() is True
 
-    def test_false_when_no_model(self):
-        from xnch.memory import llm_backend
+    def test_false_when_remote_model_configured(self):
+        with patch("xnch.memory.graph_extractor.settings", self._settings("ornith")):
+            assert gmod._use_llama_cpp() is False
 
-        with patch("xnch.memory.graph_extractor.llm_backend") as mock_lb:
-            mock_lb._resolve_model_path.side_effect = FileNotFoundError("no model")
+    def test_false_when_empty(self):
+        with patch("xnch.memory.graph_extractor.settings", self._settings("")):
             assert gmod._use_llama_cpp() is False
 
 

@@ -11,7 +11,6 @@ def filter_() -> AttentionFilter:
     return AttentionFilter(
         silence_threshold_s=1.5,
         screen_diff_threshold=0.15,
-        idle_timeout_s=600,
     )
 
 
@@ -100,28 +99,6 @@ class TestFileSavedRule:
             file_saved=False,
         )
         assert not any(a["rule"] == "vault_file_saved" for a in actions)
-
-
-class TestIdleRule:
-    def test_suppresses_when_idle_exceeds_timeout(self, filter_: AttentionFilter):
-        filter_._last_activity = time.time() - 900
-        actions = filter_.evaluate(
-            voice_transcript=None,
-            silence_duration_s=0.0,
-            screen_pixel_diff=0.0,
-            file_saved=False,
-        )
-        assert any(a["rule"] == "user_idle" for a in actions)
-
-    def test_no_suppress_when_active(self, filter_: AttentionFilter):
-        filter_.touch()
-        actions = filter_.evaluate(
-            voice_transcript=None,
-            silence_duration_s=0.0,
-            screen_pixel_diff=0.0,
-            file_saved=False,
-        )
-        assert not any(a["rule"] == "user_idle" for a in actions)
 
 
 class TestMultipleRules:

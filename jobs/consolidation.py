@@ -47,6 +47,7 @@ async def _recompute_and_archive_decay(
     episodes: list[dict],
 ) -> int:
     now = datetime.now(timezone.utc)
+    rows: list[tuple[str, float, bool]] = []
     archived = 0
     for m in episodes:
         try:
@@ -61,5 +62,9 @@ async def _recompute_and_archive_decay(
         should_archive = decay < 0.1 and not bool(m.get("archived", False))
         if should_archive:
             archived += 1
-        await store.apply_decay(m["id"], decay_score, bool(should_archive) or bool(m.get("archived", False)))
+        rows.append(
+            (m["id"], decay_score, bool(should_archive) or bool(m.get("archived", False)))
+        )
+    if rows:
+        await store.apply_decay_batch(rows)
     return archived

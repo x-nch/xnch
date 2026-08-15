@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 from typing import Any
@@ -14,11 +13,9 @@ class AttentionFilter:
         self,
         silence_threshold_s: float | None = None,
         screen_diff_threshold: float | None = None,
-        idle_timeout_s: int | None = None,
     ) -> None:
         self._silence_threshold = silence_threshold_s or settings.attention_silence_threshold_s
         self._screen_diff_threshold = screen_diff_threshold or settings.attention_screen_diff_threshold
-        self._idle_timeout = idle_timeout_s or settings.attention_idle_timeout_s
         self._last_activity: float = time.time()
 
     def touch(self) -> None:
@@ -33,7 +30,6 @@ class AttentionFilter:
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
         actions: list[dict[str, Any]] = []
-        now = time.time()
 
         # Rule 1: Voice transcript present + silence > threshold
         if voice_transcript and silence_duration_s > self._silence_threshold:
@@ -62,21 +58,8 @@ class AttentionFilter:
                 "payload": {},
             })
 
-        # Rule 4: User idle > timeout
-        idle_duration = now - self._last_activity
-        if idle_duration > self._idle_timeout:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                pass
-            else:
-                from ..jobs.consolidation import run_consolidation
-                task = asyncio.create_task(run_consolidation())
-                task.add_done_callback(lambda t: t.exception() and logger.error("consolidation failed: %s", t.exception()))
-            actions.append({
-                "rule": "user_idle",
-                "action": "suppress_responses_and_consolidate",
-                "payload": {"idle_duration_s": idle_duration},
-            })
+        # Consolidation no longer runs in-process on idle: it used to spawn
+        # CPU-bound llama.cpp inference on the server event loop, freezing the
+        # API. It now runs only via the systemd/k3s timer.
 
         return actions

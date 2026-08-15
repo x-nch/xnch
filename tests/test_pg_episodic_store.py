@@ -306,6 +306,54 @@ async def test_apply_decay(store, conn):
 
 
 @pytest.mark.asyncio
+async def test_apply_decay_batch(store, conn):
+    rows = [("e1", 0.05, True), ("e2", 0.4, False)]
+    await store.apply_decay_batch(rows)
+    sql, ids, scores, archived = conn.execute.call_args[0]
+    assert "unnest($1::uuid[], $2::float8[], $3::bool[])" in sql
+    assert ids == ["e1", "e2"]
+    assert scores == [0.05, 0.4]
+    assert archived == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_apply_decay_batch_empty(store):
+    await store.apply_decay_batch([])
+    assert store._pool.acquire.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_unextracted_for_graph(store, conn):
+    conn.fetch = AsyncMock(return_value=[_row(type="conversation")])
+    results = await store.fetch_unextracted_for_graph(limit=50)
+    assert len(results) == 1
+    assert conn.fetch.call_args[0][1] == 50
+    sql = conn.fetch.call_args[0][0]
+    assert "graph_extracted = FALSE" in sql
+    assert "ORDER BY timestamp ASC" in sql
+
+
+@pytest.mark.asyncio
+async def test_fetch_unextracted_for_graph_no_pool():
+    s = PgEpisodicStore("postgresql://localhost:5432/xnch")
+    assert await s.fetch_unextracted_for_graph() == []
+
+
+@pytest.mark.asyncio
+async def test_mark_graph_extracted(store, conn):
+    await store.mark_graph_extracted(["e1", "e2"])
+    sql, ids = conn.execute.call_args[0]
+    assert "graph_extracted = TRUE" in sql
+    assert ids == ["e1", "e2"]
+
+
+@pytest.mark.asyncio
+async def test_mark_graph_extracted_empty(store):
+    await store.mark_graph_extracted([])
+    assert store._pool.acquire.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_has_episode_of_type(store, conn):
     conn.fetchval = AsyncMock(return_value=1)
     assert await store.has_episode_of_type("identity") is True

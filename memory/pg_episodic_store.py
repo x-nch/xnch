@@ -39,10 +39,12 @@ CREATE TABLE IF NOT EXISTS episodes (
     last_recalled TIMESTAMPTZ,
     decay_score   FLOAT DEFAULT 1.0,
     archived      BOOLEAN DEFAULT FALSE,
+    graph_extracted BOOLEAN DEFAULT FALSE,
     timestamp     TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_archived_ts ON episodes(archived, timestamp DESC);
+ALTER TABLE episodes ADD COLUMN IF NOT EXISTS graph_extracted BOOLEAN DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS decision_episodes (
     episode_id              UUID PRIMARY KEY,
@@ -214,6 +216,37 @@ class PgEpisodicStore:
             )
         return [_episode_row(r) for r in rows]
 
+    async def fetch_unextracted_for_graph(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Episodes not yet fed through graph extraction, oldest first.
+
+        Each episode is extracted at most once; the consolidation job marks
+        them via mark_graph_extracted after processing.
+        """
+        if not self._pool:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT id, type, raw_text, summary, importance, recall_count,
+                          last_recalled, timestamp, decay_score, archived
+                   FROM episodes
+                   WHERE archived = FALSE AND graph_extracted = FALSE
+                   ORDER BY timestamp ASC
+                   LIMIT $1""",
+                limit,
+            )
+        return [_episode_row(r) for r in rows]
+
+    async def mark_graph_extracted(self, ids: list[str]) -> None:
+        if not self._pool or not ids:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE episodes
+                   SET graph_extracted = TRUE
+                   WHERE id = ANY($1::uuid[])""",
+                ids,
+            )
+
     async def has_episode_of_type(self, type_: str) -> bool:
         if not self._pool:
             return False
@@ -267,6 +300,25 @@ class PgEpisodicStore:
                    SET decay_score = $2, archived = $3
                    WHERE id = $1""",
                 id, decay_score, archived,
+            )
+
+    async def apply_decay_batch(
+        self,
+        rows: list[tuple[str, float, bool]],
+    ) -> None:
+        """Apply decay scores to many episodes in a single statement."""
+        if not self._pool or not rows:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE episodes e
+                   SET decay_score = u.score, archived = u.archived
+                   FROM unnest($1::uuid[], $2::float8[], $3::bool[])
+                        AS u(id, score, archived)
+                   WHERE e.id = u.id""",
+                [r[0] for r in rows],
+                [float(r[1]) for r in rows],
+                [bool(r[2]) for r in rows],
             )
 
     # ------------------------------------------------------------------ #

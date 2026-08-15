@@ -122,7 +122,7 @@ class TestLoadModel:
             result2 = llm_backend._load_model()
             assert result1 is result2
 
-    def test_load_uses_half_cpu_count(self, tmp_path):
+    def test_load_caps_threads(self, tmp_path):
         _model_in(tmp_path)
         mock_llama = MagicMock()
         fake_module = _patch_llama_cpp(mock_llama)
@@ -131,7 +131,7 @@ class TestLoadModel:
              patch.dict(sys.modules, {"llama_cpp": fake_module}):
             llm_backend._load_model()
             call = fake_module.Llama.call_args
-            assert call.kwargs.get("n_threads") == max(1, __import__("os").cpu_count() // 2)
+            assert call.kwargs.get("n_threads") == min(max(1, __import__("os").cpu_count() // 2), 4)
 
 
 class TestChatCompletion:

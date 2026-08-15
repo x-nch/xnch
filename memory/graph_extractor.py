@@ -1,21 +1,25 @@
 """Graph extractor — LLM-based entity/relation extraction.
 
 Supports two backends:
-- llama_cpp: in-process llama.cpp (default, preferred on Node A)
-- ollama: external Ollama daemon (fallback)
+- litellm: remote via the LiteLLM proxy (default — async network I/O)
+- llama_cpp: in-process llama.cpp (opt-in via
+  XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>.gguf; runs off the event loop)
 
-The backend is selected at runtime based on whether a GGUF model exists
-in the configured models directory.
+The llama.cpp backend is explicit opt-in only — GGUF presence no longer
+overrides the configured remote model, which previously ran CPU-bound
+inference inside the API process and froze the server.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
 
 import litellm
 
+from xnch.config import settings
 from xnch.memory.graph_store import GraphStore
 from xnch.memory.pg_episodic_store import PgEpisodicStore
 from xnch.memory import llm_backend
@@ -34,14 +38,14 @@ Episode:
 
 
 def _use_llama_cpp() -> bool:
-    """Prefer the in-process llama.cpp backend when a GGUF model exists.
+    """Use the in-process llama.cpp backend only when explicitly configured.
 
-    Ollama is only used as a fallback when no local GGUF model is present.
+    Auto-detection by GGUF file presence is intentionally gone: it silently
+    overrode the configured remote model and ran CPU-bound inference inside
+    the API process. Opt in explicitly with:
+      XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<filename>.gguf
     """
-    try:
-        return llm_backend._resolve_model_path().exists()
-    except FileNotFoundError:
-        return False
+    return settings.graph_extractor_model.startswith("llama_cpp/")
 
 
 async def extract_and_store(
@@ -55,10 +59,10 @@ async def extract_and_store(
         await pg_episodic.connect()
     own_graph = graph_store is None
     try:
-        episodes = await pg_episodic.retrieve_similar(top_k=100)
+        episodes = await pg_episodic.fetch_unextracted_for_graph(limit=100)
 
         if not episodes:
-            logger.info("No recent episodes to extract from")
+            logger.info("No unextracted episodes to process")
             return 0
 
         graph = graph_store or GraphStore(relationship_store=relationship_store)
@@ -66,9 +70,11 @@ async def extract_and_store(
             graph.connect()
         try:
             triples_written = 0
+            processed_ids: list[str] = []
             for ep in episodes:
                 raw = ep.get("raw_text") or ep.get("summary") or ""
                 if not raw:
+                    processed_ids.append(ep["id"])
                     continue
                 triples = await _extract_triples(raw)
                 for t in triples:
@@ -92,6 +98,9 @@ async def extract_and_store(
                         confidence=0.8,
                     )
                     triples_written += 1
+                processed_ids.append(ep["id"])
+            if processed_ids:
+                await pg_episodic.mark_graph_extracted(processed_ids)
             logger.info("Wrote %d triples from %d episodes", triples_written, len(episodes))
             return triples_written
         finally:
@@ -147,7 +156,7 @@ def _normalize_entity(e: Any) -> dict[str, str] | None:
 
 
 async def _extract_litellm(text: str) -> list[dict[str, Any]]:
-    """Extract triples via LiteLLM proxy (ornith on Node B)."""
+    """Extract triples via the LiteLLM proxy (default remote backend)."""
     try:
         import os
 
@@ -156,7 +165,7 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
         api_key = os.environ.get("LITELLM_MASTER_KEY", "")
         api_base = xnch_settings.litellm_proxy_url.rstrip("/")
         resp = await litellm.acompletion(
-            model="ornith",
+            model=xnch_settings.graph_extractor_model,
             messages=[
                 {
                     "role": "system",
@@ -202,14 +211,19 @@ async def _extract_ollama(text: str) -> list[dict[str, Any]]:
 
 
 async def _extract_llama_cpp(text: str) -> list[dict[str, Any]]:
-    """Extract triples using in-process llama-cpp-python."""
+    """Extract triples using in-process llama-cpp-python.
+
+    The underlying inference is synchronous and CPU-bound, so it is executed
+    via asyncio.to_thread to keep it off the event loop.
+    """
     try:
         messages = [
             {"role": "system", "content": _EXTRACTION_PROMPT},
             {"role": "user", "content": text},
         ]
-        content = llm_backend.chat_completion(
-            messages=messages,
+        content = await asyncio.to_thread(
+            llm_backend.chat_completion,
+            messages,
             temperature=0.1,
             max_tokens=1024,
         )
