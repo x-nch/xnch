@@ -174,6 +174,8 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
         model = xnch_settings.graph_extractor_model
         if "/" not in model:
             model = f"openai/{model}"
+        if len(text) > 6000:
+            text = text[:6000] + "\n...[truncated]"
         resp = await litellm.acompletion(
             model=model,
             messages=[
@@ -186,12 +188,18 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
             api_base=api_base,
             api_key=api_key,
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=4096,
         )
         content = resp.choices[0].message.content.strip()
         if content.startswith("```"):
             content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        return json.loads(content)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            first, last = content.find("["), content.rfind("]")
+            if first != -1 and last > first:
+                return json.loads(content[first : last + 1])
+            raise
     except Exception:
         logger.exception("LiteLLM extraction failed for episode text")
         raise
