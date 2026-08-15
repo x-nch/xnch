@@ -70,6 +70,28 @@ class TestExtractionPrompt:
         assert "}}" not in formatted
 
 
+class TestLiteLLMProxyModel:
+    """Bare model names get an openai/ prefix when routed via the proxy."""
+
+    async def test_does_not_prefix_provider_qualified_model(self):
+        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
+             patch("xnch.config.settings") as mock_settings:
+            mock_settings.graph_extractor_model = "ollama/phi3:mini"
+            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
+            await gmod._extract_litellm("text")
+            assert mock.await_args.kwargs["model"] == "ollama/phi3:mini"
+
+    async def test_prefixes_bare_model_with_openai(self):
+        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
+             patch("xnch.config.settings") as mock_settings:
+            mock_settings.graph_extractor_model = "qwen2.5-vl-7b"
+            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
+            await gmod._extract_litellm("text")
+            assert mock.await_args.kwargs["model"] == "openai/qwen2.5-vl-7b"
+
+
 class TestUseLlamaCpp:
     """Test the _use_llama_cpp backend-selection helper.
 

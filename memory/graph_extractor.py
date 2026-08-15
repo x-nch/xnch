@@ -171,8 +171,11 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
 
         api_key = os.environ.get("LITELLM_MASTER_KEY", "")
         api_base = xnch_settings.litellm_proxy_url.rstrip("/")
+        model = xnch_settings.graph_extractor_model
+        if "/" not in model:
+            model = f"openai/{model}"
         resp = await litellm.acompletion(
-            model=xnch_settings.graph_extractor_model,
+            model=model,
             messages=[
                 {
                     "role": "system",
