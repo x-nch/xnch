@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 
 _EXTRACTION_PROMPT = """Extract entity-relation triples from the following decision episode.
 Return a JSON list of objects, each with:
-  - "subject": {"id": str, "name": str, "type": str}
+  - "subject": {{"id": str, "name": str, "type": str}}
   - "relation": str (e.g. "deployed_to", "triggered_by", "approved")
-  - "object": {"id": str, "name": str, "type": str}
+  - "object": {{"id": str, "name": str, "type": str}}
 
 Episode:
 {raw_text}
@@ -76,7 +76,14 @@ async def extract_and_store(
                 if not raw:
                     processed_ids.append(ep["id"])
                     continue
-                triples = await _extract_triples(raw)
+                try:
+                    triples = await _extract_triples(raw)
+                except Exception:
+                    logger.warning(
+                        "Skipping episode %s: extraction failed, will retry next run",
+                        ep["id"],
+                    )
+                    continue
                 for t in triples:
                     t = _normalize_triple(t)
                     if not t:
@@ -184,7 +191,7 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
         return json.loads(content)
     except Exception:
         logger.exception("LiteLLM extraction failed for episode text")
-        return []
+        raise
 
 
 async def _extract_ollama(text: str) -> list[dict[str, Any]]:
@@ -195,8 +202,8 @@ async def _extract_ollama(text: str) -> list[dict[str, Any]]:
         resp = await litellm.acompletion(
             model=model,
             messages=[
-                {"role": "system", "content": _EXTRACTION_PROMPT},
-                {"role": "user", "content": text},
+                {"role": "system", "content": _EXTRACTION_PROMPT.format(raw_text=text)},
+                {"role": "user", "content": "Return the JSON list of triples."},
             ],
             temperature=0.1,
             max_tokens=1024,
@@ -207,7 +214,7 @@ async def _extract_ollama(text: str) -> list[dict[str, Any]]:
         return json.loads(content)
     except Exception:
         logger.exception("LLM extraction failed for episode text")
-        return []
+        raise
 
 
 async def _extract_llama_cpp(text: str) -> list[dict[str, Any]]:
@@ -218,8 +225,8 @@ async def _extract_llama_cpp(text: str) -> list[dict[str, Any]]:
     """
     try:
         messages = [
-            {"role": "system", "content": _EXTRACTION_PROMPT},
-            {"role": "user", "content": text},
+            {"role": "system", "content": _EXTRACTION_PROMPT.format(raw_text=text)},
+            {"role": "user", "content": "Return the JSON list of triples."},
         ]
         content = await asyncio.to_thread(
             llm_backend.chat_completion,
@@ -231,4 +238,4 @@ async def _extract_llama_cpp(text: str) -> list[dict[str, Any]]:
         return json.loads(content)
     except Exception:
         logger.exception("LLM extraction failed for episode text")
-        return []
+        raise

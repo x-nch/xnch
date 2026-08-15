@@ -30,12 +30,12 @@ class TestBackendSelection:
             mock_extract.assert_awaited_once_with("test text")
 
     async def test_returns_empty_list_on_llama_cpp_failure(self):
-        """If the llama.cpp backend raises, _extract_llama_cpp returns []."""
+        """If the llama.cpp backend raises, _extract_llama_cpp propagates the error."""
         from xnch.memory import llm_backend
 
         with patch.object(llm_backend, "chat_completion", side_effect=RuntimeError("model load failed")):
-            result = await gmod._extract_llama_cpp("test")
-            assert result == []
+            with pytest.raises(RuntimeError):
+                await gmod._extract_llama_cpp("test")
 
     async def test_fallback_to_litellm_when_no_gguf(self):
         """If no GGUF exists, falls back to LiteLLM."""
@@ -47,12 +47,27 @@ class TestBackendSelection:
             mock_extract.assert_awaited_once_with("test")
 
     async def test_litellm_failure_returns_empty(self):
-        """If LiteLLM raises, _extract_litellm returns []."""
+        """If LiteLLM raises, _extract_litellm propagates and _extract_triples raises."""
         with patch.object(gmod, "_use_llama_cpp", return_value=False), \
              patch.object(gmod, "_extract_litellm", new_callable=AsyncMock) as mock_extract:
             mock_extract.side_effect = RuntimeError("litellm not reachable")
             with pytest.raises(RuntimeError):
                 await gmod._extract_triples("test")
+
+
+class TestExtractionPrompt:
+    """The prompt template must survive .format() despite JSON braces."""
+
+    def test_prompt_formats_without_key_error(self):
+        formatted = gmod._EXTRACTION_PROMPT.format(raw_text="episode text")
+        assert "Episode:\nepisode text" in formatted
+        assert '"subject": {"id": str, "name": str, "type": str}' in formatted
+        assert '{"id": str' in formatted
+
+    def test_prompt_escaped_braces_render_single(self):
+        formatted = gmod._EXTRACTION_PROMPT.format(raw_text="episode text")
+        assert "{{" not in formatted
+        assert "}}" not in formatted
 
 
 class TestUseLlamaCpp:
