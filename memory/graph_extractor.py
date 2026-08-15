@@ -190,19 +190,23 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
             temperature=0.1,
             max_tokens=4096,
         )
-        content = resp.choices[0].message.content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            first, last = content.find("["), content.rfind("]")
-            if first != -1 and last > first:
-                return json.loads(content[first : last + 1])
-            raise
     except Exception:
         logger.exception("LiteLLM extraction failed for episode text")
         raise
+    content = resp.choices[0].message.content.strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        first, last = content.find("["), content.rfind("]")
+        if first != -1 and last > first:
+            return json.loads(content[first : last + 1])
+        logger.warning(
+            "LLM returned no parseable JSON (%d chars); treating as no triples",
+            len(content),
+        )
+        return []
 
 
 async def _extract_ollama(text: str) -> list[dict[str, Any]]:

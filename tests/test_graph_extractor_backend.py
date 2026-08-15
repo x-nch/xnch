@@ -114,6 +114,18 @@ class TestLiteLLMProxyModel:
             assert len(result) == 1
             assert result[0]["relation"] == "uses"
 
+    async def test_unparseable_content_treated_as_no_triples(self):
+        """If the LLM replies with non-JSON prose, treat it as zero triples
+        (mark the episode done) rather than re-raising and retrying forever."""
+        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
+             patch("xnch.config.settings") as mock_settings:
+            mock_settings.graph_extractor_model = "qwen2.5-vl-7b"
+            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            mock.return_value.choices = [MagicMock(message=MagicMock(
+                content="I'm sorry, I cannot extract triples from this text."
+            ))]
+            assert await gmod._extract_litellm("text") == []
+
 
 class TestUseLlamaCpp:
     """Test the _use_llama_cpp backend-selection helper.
