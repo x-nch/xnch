@@ -67,14 +67,6 @@ class Settings(BaseSettings):
     # LiteLLM proxy
     litellm_proxy_url: str = "http://litellm:4000"
 
-    # beeAI orchestration (side-by-side, feature-flagged)
-    beeai_enabled: bool = False
-    beeai_demo_mode: bool = False
-    beeai_model: str = "ornith"
-    beeai_api_key: str = "sk-local"
-    beeai_timeout_s: float = 60.0
-    beeai_max_iterations: int = 8
-
     # Graph extractor (remote via LiteLLM proxy by default; opt into the
     # in-process llama.cpp backend with XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>)
     graph_extractor_model: str = "ornith"

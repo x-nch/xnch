@@ -85,16 +85,16 @@ class TestLiteLLMProxyModel:
     async def test_prefixes_bare_model_with_openai(self):
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "qwen2.5-vl-7b"
+            mock_settings.graph_extractor_model = "ornith"
             mock_settings.litellm_proxy_url = "http://localhost:4000"
             mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
             await gmod._extract_litellm("text")
-            assert mock.await_args.kwargs["model"] == "openai/qwen2.5-vl-7b"
+            assert mock.await_args.kwargs["model"] == "openai/ornith"
 
     async def test_truncates_long_episode(self):
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "qwen2.5-vl-7b"
+            mock_settings.graph_extractor_model = "ornith"
             mock_settings.litellm_proxy_url = "http://localhost:4000"
             mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
             await gmod._extract_litellm("x" * 12000)
@@ -105,7 +105,7 @@ class TestLiteLLMProxyModel:
     async def test_recovers_json_array_from_prose(self):
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "qwen2.5-vl-7b"
+            mock_settings.graph_extractor_model = "ornith"
             mock_settings.litellm_proxy_url = "http://localhost:4000"
             mock.return_value.choices = [MagicMock(message=MagicMock(
                 content='Here is the result:\n[{"subject": {"id": "a", "name": "A", "type": "svc"}, "relation": "uses", "object": {"id": "b", "name": "B", "type": "svc"}}]\nDone!'
@@ -119,7 +119,7 @@ class TestLiteLLMProxyModel:
         (mark the episode done) rather than re-raising and retrying forever."""
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "qwen2.5-vl-7b"
+            mock_settings.graph_extractor_model = "ornith"
             mock_settings.litellm_proxy_url = "http://localhost:4000"
             mock.return_value.choices = [MagicMock(message=MagicMock(
                 content="I'm sorry, I cannot extract triples from this text."
