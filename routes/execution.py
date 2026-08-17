@@ -77,11 +77,22 @@ async def _fire_nexi_callback(
     app,
 ) -> None:
     outcome_score_predicted = 0.5
-    if episode_id:
-        ep = await app.episodic.get_episode(episode_id)
-        if ep and ep.get("context_snapshot"):
-            snap = json.loads(ep["context_snapshot"])
-            outcome_score_predicted = snap.get("outcome_score_predicted", 0.5)
+    intent_class = getattr(body, "intent_class", "")
+    action_type = getattr(body, "action_type", "")
+    entity_class = getattr(body, "entity_class", "")
+    actor_role = getattr(body, "actor_role", "")
+    # Context tuple lives in the SQLite episodic store keyed by decision_id
+    # (written at verdict time). Look it up by decision_id, not by episode_id,
+    # because episode_id may be the PG id which does not exist in SQLite.
+    ep = await app.episodic.get_episode_by_decision(body.decision_id)
+    if ep and ep.get("context_snapshot"):
+        snap = json.loads(ep["context_snapshot"])
+        outcome_score_predicted = snap.get("outcome_score_predicted", 0.5)
+    if ep:
+        intent_class = ep.get("intent_class", intent_class)
+        action_type = ep.get("action_type", action_type)
+        entity_class = ep.get("entity_class", entity_class)
+        actor_role = ep.get("actor_role", actor_role)
 
     payload = {
         "execution_ref": body.execution_ref,
@@ -89,6 +100,10 @@ async def _fire_nexi_callback(
         "episode_id": episode_id,
         "outcome_status": body.outcome_status,
         "outcome_score_predicted": outcome_score_predicted,
+        "intent_class": intent_class,
+        "action_type": action_type,
+        "entity_class": entity_class,
+        "actor_role": actor_role,
         "trace_id": body.decision_id,
     }
     try:

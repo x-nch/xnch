@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Nexi callback
     nexi_base_url: str = "http://localhost:8000"
 
+    # Self (xnch) base URL — used by background jobs that POST to own API
+    self_base_url: str = "http://localhost:8001"
+
     # PostgreSQL / pgvector
     postgres_url: str = "postgresql://xnch:cf00d3e9a10c400f9083b424b94f0cf7@localhost:5432/xnch"
 

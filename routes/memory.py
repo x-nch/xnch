@@ -68,6 +68,7 @@ class MemoryReadRequest(BaseModel):
 class MemoryWriteRequest(BaseModel):
     session_id: str
     actor_id: str
+    actor_role: str | None = None
     write_type: str
     payload: dict[str, Any]
 
@@ -100,6 +101,13 @@ async def memory_read(body: MemoryReadRequest, request: Request) -> dict[str, An
         max_patterns=max_patterns,
     )
 
+    experiences = await app.experience_store.fetch_for_manifest(
+        intent_class=intent_class,
+        entity_class=entity_class,
+        actor_role=actor_role,
+        max_experiences=q.get("max_experiences", 10),
+    )
+
     # Policies scoped to this context tuple
     policy_refs = _build_policy_refs(app, intent_class, entity_class, actor_role)
 
@@ -112,6 +120,7 @@ async def memory_read(body: MemoryReadRequest, request: Request) -> dict[str, An
         "pinned_at": datetime.now(timezone.utc).isoformat(),
         "episodes": [_format_episode(ep) for ep in episodes],
         "patterns": [_format_pattern(p) for p in patterns],
+        "experiences": [_format_experience(exp) for exp in experiences],
         "policies": policy_refs,
     }
 
@@ -150,6 +159,35 @@ async def memory_write(body: MemoryWriteRequest, request: Request) -> dict[str, 
             asyncio.create_task(app.pattern_extractor.run())
 
         return {"status": "ok", "episode_id": episode_id}
+
+    if body.write_type == "EXPERIENCE_REFLECTION":
+        payload = body.payload
+        required = ["context_signature", "intent_class", "action_type", "entity_class",
+                    "actor_role", "outcome", "lesson", "insight", "verdict", "applicability"]
+        missing = [f for f in required if not payload.get(f)]
+        if missing:
+            raise HTTPException(status_code=422, detail=f"Missing fields: {', '.join(missing)}")
+
+        await app.experience_store.upsert_experience(
+            context_signature=payload["context_signature"],
+            intent_class=payload["intent_class"],
+            action_type=payload["action_type"],
+            entity_class=payload["entity_class"],
+            actor_role=payload["actor_role"],
+            outcome=payload["outcome"],
+            lesson=payload["lesson"],
+            insight=payload["insight"],
+            verdict=payload["verdict"],
+            applicability=payload["applicability"],
+        )
+
+        app.event_log.emit(
+            body.session_id, "xnch.memory", "EXPERIENCE_REFLECTION_WRITTEN",
+            data={"context_signature": payload["context_signature"],
+                  "verdict": payload["verdict"]},
+        )
+
+        return {"status": "ok"}
 
     raise HTTPException(status_code=400, detail=f"Unknown write_type: {body.write_type}")
 
@@ -290,6 +328,24 @@ def _format_pattern(p: dict) -> dict:
         "success_rate": p.get("success_rate"),
         "confidence": p.get("confidence"),
         "observation_count": p.get("observation_count"),
+    }
+
+
+def _format_experience(e: dict) -> dict:
+    return {
+        "experience_id": e.get("experience_id"),
+        "context_signature": e.get("context_signature"),
+        "intent_class": e.get("intent_class"),
+        "action_type": e.get("action_type"),
+        "entity_class": e.get("entity_class"),
+        "actor_role": e.get("actor_role"),
+        "outcome": e.get("outcome"),
+        "lesson": e.get("lesson"),
+        "insight": e.get("insight"),
+        "verdict": e.get("verdict"),
+        "applicability": e.get("applicability"),
+        "confidence": e.get("confidence"),
+        "created_at": _unix_to_iso(e.get("created_at")),
     }
 
 

@@ -83,6 +83,28 @@ CREATE TABLE IF NOT EXISTS policy_candidates (
     created_at          REAL NOT NULL DEFAULT (unixepoch())
 );
 
+CREATE TABLE IF NOT EXISTS experiences (
+    experience_id       TEXT PRIMARY KEY,
+    context_signature   TEXT NOT NULL UNIQUE,
+    intent_class        TEXT NOT NULL,
+    action_type         TEXT NOT NULL,
+    entity_class        TEXT NOT NULL,
+    actor_role          TEXT NOT NULL,
+    outcome             TEXT NOT NULL,
+    lesson              TEXT NOT NULL,
+    insight             TEXT NOT NULL,
+    verdict             TEXT NOT NULL,
+    applicability       TEXT NOT NULL,
+    confidence          REAL NOT NULL,
+    observation_count   INTEGER NOT NULL DEFAULT 1,
+    created_at          REAL NOT NULL DEFAULT (unixepoch()),
+    updated_at          REAL NOT NULL DEFAULT (unixepoch()),
+    schema_version      TEXT DEFAULT 'exp-v1'
+);
+
+CREATE INDEX IF NOT EXISTS idx_experiences_tuple
+    ON experiences(intent_class, entity_class, actor_role);
+
 CREATE TABLE IF NOT EXISTS system_state (
     key     TEXT PRIMARY KEY,
     value   TEXT NOT NULL

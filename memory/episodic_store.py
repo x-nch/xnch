@@ -75,6 +75,15 @@ class EpisodicStore:
                 row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def get_episode_by_decision(self, decision_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self._db) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM episodes WHERE decision_id = ?", (decision_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+        return dict(row) if row else None
+
     async def write_prediction_update(
         self,
         episode_id: str,

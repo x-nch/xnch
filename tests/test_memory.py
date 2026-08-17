@@ -68,6 +68,24 @@ async def test_fetch_for_manifest(episodic):
     assert len(rows) == 3
 
 
+async def test_get_episode_by_decision(episodic):
+    episode_id = await episodic.create_episode(
+        "dec-99", "EXECUTION", "DEPLOY", "SERVICE", "operator",
+        {"outcome_score_predicted": 0.7},
+    )
+    row = await episodic.get_episode_by_decision("dec-99")
+    assert row is not None
+    assert row["episode_id"] == episode_id
+    assert row["intent_class"] == "EXECUTION"
+    assert row["action_type"] == "DEPLOY"
+    assert row["entity_class"] == "SERVICE"
+    assert row["actor_role"] == "operator"
+
+
+async def test_get_episode_by_decision_returns_none_when_missing(episodic):
+    assert await episodic.get_episode_by_decision("dec-missing") is None
+
+
 async def test_pattern_upsert_and_fetch(patterns):
     await patterns.upsert_pattern(
         context_signature="sha256:abc",

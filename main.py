@@ -9,9 +9,11 @@ from fastapi import FastAPI
 from .auth import load_or_generate_keypair, GovernanceStore, TokenSigner, TokenVerifier
 from .audit import EventLog, DecisionLedger
 from .config import settings
-from .learning import PatternExtractor, ScoreAdapter, PolicyCandidateGenerator
+from .learning import PatternExtractor, PolicyCandidateGenerator
+from .learning.evolution import WeightEvolver, PolicyRuleEvolver
 from .memory import init_db, EpisodicStore, PatternStore, KVCache, PgEpisodicStore
 from .memory import SensoryBuffer, WorkingMemory, GraphStore, RelationshipStore
+from .memory.experience_store import ExperienceStore
 from .memory.db import get_state_version, get_policy_version, increment_state_version
 from .policy import PolicyLoader, PolicyEngine
 from .routes import (
@@ -46,6 +48,7 @@ async def lifespan(app: FastAPI):
     # Memory
     s.episodic = EpisodicStore(settings.db_path)
     s.pattern_store = PatternStore(settings.db_path)
+    s.experience_store = ExperienceStore(settings.db_path)
     s.kv_cache = KVCache(settings.redis_url)
 
     # Audit
@@ -116,8 +119,9 @@ async def lifespan(app: FastAPI):
 
     # Learning
     s.pattern_extractor = PatternExtractor(s.pg_episodic, s.pattern_store)
-    s.score_adapter = ScoreAdapter(settings.db_path)
     s.policy_candidates = PolicyCandidateGenerator(s.pattern_store, settings.db_path)
+    s.weight_evolver = _build_weight_evolver(s.pg_episodic)
+    s.policy_evolver = _build_policy_evolver(s.pg_episodic)
 
     # Convenience helpers for routes
     async def _get_state_version() -> str:
@@ -138,8 +142,9 @@ async def lifespan(app: FastAPI):
     # Scheduler
     scheduler = AsyncIOScheduler()
     scheduler.add_job(s.pattern_extractor.run, "cron", hour="*/6", id="pattern_extractor")
-    scheduler.add_job(s.score_adapter.evaluate, "cron", hour="*/6", minute=30, id="score_adapter")
-    scheduler.add_job(s.policy_candidates.run, "cron", hour="*/6", minute=45, id="policy_candidates")
+    scheduler.add_job(s.weight_evolver.run, "cron", hour="*/6", minute=30, id="weight_evolver")
+    scheduler.add_job(s.policy_evolver.run, "cron", hour="*/6", minute=45, id="policy_evolver")
+    scheduler.add_job(s.policy_candidates.run, "cron", hour="*/6", minute=50, id="policy_candidates")
     scheduler.start()
     s.scheduler = scheduler
 
@@ -209,3 +214,26 @@ def _sync_policies(s) -> None:
     target = s.policies_dir / "default.yaml"
     if bundled.exists() and not target.exists():
         shutil.copy(bundled, target)
+
+
+
+def _build_weight_evolver(pg_episodic) -> WeightEvolver:
+    """Wire the WeightEvolver to the app's PG episodic store and governance API."""
+    from datetime import datetime, timedelta, timezone
+
+    async def fetch_since() -> list:
+        since = datetime.now(timezone.utc) - timedelta(days=30)
+        return await pg_episodic.fetch_decision_episodes_with_scores(since)
+
+    return WeightEvolver(fetch_fn=fetch_since)
+
+
+def _build_policy_evolver(pg_episodic) -> PolicyRuleEvolver:
+    """Wire the PolicyRuleEvolver to the app's PG episodic store and policy_candidates table."""
+    from datetime import datetime, timedelta, timezone
+
+    async def fetch_episodes() -> list:
+        since = datetime.now(timezone.utc) - timedelta(days=30)
+        return await pg_episodic.fetch_decision_episodes_with_scores(since)
+
+    return PolicyRuleEvolver(episodes_fn=fetch_episodes)

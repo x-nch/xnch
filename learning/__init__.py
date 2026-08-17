@@ -1,5 +1,5 @@
 from .pattern_extractor import PatternExtractor
-from .score_adapter import ScoreAdapter
 from .policy_candidates import PolicyCandidateGenerator
+from .evolution import WeightEvolver
 
-__all__ = ["PatternExtractor", "ScoreAdapter", "PolicyCandidateGenerator"]
+__all__ = ["PatternExtractor", "PolicyCandidateGenerator", "WeightEvolver"]
