@@ -1,8 +1,10 @@
 """xnch-server v0 — governance, memory, and authorization service."""
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from starlette.requests import Request
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
@@ -202,6 +204,25 @@ async def system_state(request: Request) -> dict:
     state_version = await request.app.state.get_state_version()
     policy_version = await request.app.state.get_policy_version()
     return {"system_state_version": state_version, "policy_version": policy_version}
+
+
+async def _probe_vllm() -> tuple[bool, int | None]:
+    """GET the configured vLLM health URL; return (available, latency_ms)."""
+    start = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=settings.llm_probe_timeout_s) as client:
+            resp = await client.get(settings.llm_status_url)
+    except httpx.HTTPError:
+        return False, None
+    available = resp.status_code == 200
+    latency_ms = int((time.perf_counter() - start) * 1000) if available else None
+    return available, latency_ms
+
+
+@app.get("/system/llm-status")
+async def llm_status() -> dict:
+    available, latency_ms = await _probe_vllm()
+    return {"available": available, "model": settings.llm_model_id, "latency_ms": latency_ms}
 
 
 def _sync_policies(s) -> None:
