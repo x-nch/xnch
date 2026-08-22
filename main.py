@@ -1,4 +1,5 @@
 """xnch-server v0 — governance, memory, and authorization service."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from starlette.requests import Request
@@ -74,9 +75,17 @@ async def lifespan(app: FastAPI):
     s.working_memory = WorkingMemory(settings.redis_url)
 
     # Layer 3 — Graph store (Kuzu semantic graph)
+    from xnch.memory.graph_broadcaster import GraphBroadcaster
+
+    s.graph_broadcaster = GraphBroadcaster()
+    s.graph_broadcaster.bind_loop(asyncio.get_running_loop())
     s.relationship_store = RelationshipStore(settings.postgres_url)
     await s.relationship_store.connect()
-    s.graph_store = GraphStore(db_path=settings.db_path, relationship_store=s.relationship_store)
+    s.graph_store = GraphStore(
+        db_path=settings.db_path,
+        relationship_store=s.relationship_store,
+        broadcaster=s.graph_broadcaster,
+    )
     s.graph_store.connect()
 
     from xnch_mcp.fs.service import FsReadService
