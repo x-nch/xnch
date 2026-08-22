@@ -14,13 +14,12 @@ from .learning.evolution import WeightEvolver, PolicyRuleEvolver
 from .memory import init_db, EpisodicStore, PatternStore, KVCache, PgEpisodicStore
 from .memory import SensoryBuffer, WorkingMemory, GraphStore, RelationshipStore
 from .memory.experience_store import ExperienceStore
-from .memory.goal_store import GoalStore
 from .memory.db import get_state_version, get_policy_version, increment_state_version
 from .policy import PolicyLoader, PolicyEngine
 from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
-    nexi_gateway_router, chat_router, admin_router, voice_router, goal_router,
+    nexi_gateway_router, chat_router, admin_router, voice_router,
 )
 from xnch_mcp.http_router import router as mcp_router
 
@@ -50,7 +49,6 @@ async def lifespan(app: FastAPI):
     s.episodic = EpisodicStore(settings.db_path)
     s.pattern_store = PatternStore(settings.db_path)
     s.experience_store = ExperienceStore(settings.db_path)
-    s.goal_store = GoalStore(settings.db_path)
     s.kv_cache = KVCache(settings.redis_url)
 
     # Audit
@@ -70,7 +68,6 @@ async def lifespan(app: FastAPI):
 
     # Scraper document store (pgvector-backed, shares pg_episodic pool)
     from scraper.pipeline.store import ScraperDocumentStore
-
     s.scraped_store = ScraperDocumentStore(s.pg_episodic._pool)
 
     # Layer 0 — Sensory buffer (Redis perception signals)
@@ -186,7 +183,6 @@ app.include_router(nexi_gateway_router)
 app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(voice_router)
-app.include_router(goal_router)
 app.include_router(mcp_router)
 
 
