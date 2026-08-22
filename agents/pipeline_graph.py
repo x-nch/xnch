@@ -97,6 +97,7 @@ async def generate_options(state: DecisionState) -> dict[str, Any]:
     """Node: generate plan options (maps from option_generator.py)."""
     from nexi.pipeline.option_generator import generate_options as _generate
     from nexi.adapters.model_adapter import ModelAdapter
+    from nexi.models import Intent, ContextManifest
     
     adapter = ModelAdapter()
     session = _session_from_state(state)
@@ -122,6 +123,7 @@ async def filter_policy(state: DecisionState) -> dict[str, Any]:
     """
     from nexi.pipeline.policy_filter import PolicyFilter
     from nexi.adapters.xnch_client import XnchClient
+    from nexi.models import PlanOption
     
     xnch = XnchClient()
     filter_ = PolicyFilter(xnch)
@@ -153,6 +155,7 @@ def route_after_policy(state: DecisionState) -> str:
 async def evaluate(state: DecisionState) -> dict[str, Any]:
     """Node: score and evaluate options (maps from evaluator.py)."""
     from nexi.pipeline.evaluator import Evaluator
+    from nexi.models import Intent, ContextManifest, PlanOption, PolicyDryRunResponse
     
     evaluator = Evaluator()
     session = _session_from_state(state)
