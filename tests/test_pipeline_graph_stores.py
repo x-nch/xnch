@@ -6,6 +6,8 @@ while stubbed-graph route tests stayed green.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from types import SimpleNamespace
 
@@ -97,3 +99,37 @@ def test_session_from_state_builds_valid_context() -> None:
     assert session.raw_input == state["raw_input"]
     assert session.actor.role.value in {"ADMIN", "OPERATOR", "VIEWER", "AGENT"}
     assert session.idempotency_key is not None
+
+
+async def test_classify_intent_emits_complete_payload(monkeypatch) -> None:
+    """classify_intent must emit every required Intent field (incl. session_id,
+    raw_input_hash) so downstream nodes can rebuild the model."""
+    from uuid import uuid4
+
+    from nexi.models import Intent
+
+    async def fake_interpret(self, *, raw_input, session_id, trace_id):
+        return Intent(
+            session_id=session_id,
+            intent_class="EXECUTION",
+            action_type="apply",
+            target_entity_id="edge-proxy",
+            target_entity_class="service",
+            urgency="NORMAL",
+            ambiguity_score=0.0,
+            raw_input_hash="sha256:abc",
+            raw_input=raw_input,
+        )
+
+    monkeypatch.setattr(
+        "nexi.pipeline.intent_interpreter.IntentInterpreter.interpret",
+        fake_interpret,
+    )
+    sid = str(uuid4())
+    out = await pg.classify_intent(
+        {"session_id": sid, "raw_input": "Deploy now", "trace_id": str(uuid4())}
+    )
+    payload = out["intent"]
+    assert payload["session_id"] == sid
+    assert payload["raw_input_hash"].startswith("sha256:")
+    json.dumps(payload)

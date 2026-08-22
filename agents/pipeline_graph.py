@@ -44,15 +44,7 @@ async def classify_intent(state: DecisionState) -> dict[str, Any]:
         trace_id=state["trace_id"],
     )
     return {
-        "intent": {
-            "intent_class": intent.intent_class,
-            "action_type": intent.action_type,
-            "target_entity_id": intent.target_entity_id,
-            "target_entity_class": intent.target_entity_class,
-            "urgency": intent.urgency,
-            "ambiguity_score": intent.ambiguity_score,
-            "raw_input": intent.raw_input,
-        },
+        "intent": intent.model_dump(mode="json"),
         "events": [{"type": "intent_classified", "intent_class": intent.intent_class}],
     }
 
