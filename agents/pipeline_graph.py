@@ -15,6 +15,23 @@ from .decision_state import DecisionState
 from .hitl import normalize_resume, should_interrupt_execution
 
 
+def _session_from_state(state: DecisionState) -> Any:
+    """Build a complete SessionContext from graph state (mirrors nexi/main.py)."""
+    from uuid import UUID, uuid4
+
+    from nexi.models import SessionContext
+
+    return SessionContext(
+        session_id=UUID(state["session_id"]),
+        trace_id=UUID(state["trace_id"]),
+        actor={"id": "xnch-pipeline", "role": "AGENT", "capability_set": []},
+        system_state_version="",
+        policy_version="",
+        idempotency_key=uuid4(),
+        raw_input=state["raw_input"],
+    )
+
+
 async def classify_intent(state: DecisionState) -> dict[str, Any]:
     """Node: classify user intent (maps from intent_interpreter.py)."""
     from nexi.pipeline.intent_interpreter import IntentInterpreter
@@ -80,10 +97,9 @@ async def generate_options(state: DecisionState) -> dict[str, Any]:
     """Node: generate plan options (maps from option_generator.py)."""
     from nexi.pipeline.option_generator import generate_options as _generate
     from nexi.adapters.model_adapter import ModelAdapter
-    from nexi.models import SessionContext, Intent, ContextManifest
-
+    
     adapter = ModelAdapter()
-    session = SessionContext(trace_id=state["trace_id"])
+    session = _session_from_state(state)
     intent = Intent(**state["intent"])
     manifest = ContextManifest(**state["context"])
 
@@ -106,11 +122,10 @@ async def filter_policy(state: DecisionState) -> dict[str, Any]:
     """
     from nexi.pipeline.policy_filter import PolicyFilter
     from nexi.adapters.xnch_client import XnchClient
-    from nexi.models import SessionContext, PlanOption
-
+    
     xnch = XnchClient()
     filter_ = PolicyFilter(xnch)
-    session = SessionContext(trace_id=state["trace_id"])
+    session = _session_from_state(state)
     options = [PlanOption(**o) for o in state["options"]]
 
     surviving = await filter_.filter(session=session, options=options)
@@ -138,10 +153,9 @@ def route_after_policy(state: DecisionState) -> str:
 async def evaluate(state: DecisionState) -> dict[str, Any]:
     """Node: score and evaluate options (maps from evaluator.py)."""
     from nexi.pipeline.evaluator import Evaluator
-    from nexi.models import SessionContext, Intent, ContextManifest, PlanOption, PolicyDryRunResponse
-
+    
     evaluator = Evaluator()
-    session = SessionContext(trace_id=state["trace_id"])
+    session = _session_from_state(state)
     intent = Intent(**state["intent"])
     manifest = ContextManifest(**state["context"])
 
@@ -174,9 +188,9 @@ async def evaluate(state: DecisionState) -> dict[str, Any]:
 async def select(state: DecisionState) -> dict[str, Any]:
     """Node: select best option. May interrupt for human approval on EXECUTION."""
     from nexi.pipeline.selector import select_decision
-    from nexi.models import SessionContext, Intent, ContextManifest, PlanOption, EvaluatedOption
+    from nexi.models import Intent, ContextManifest, PlanOption, EvaluatedOption
 
-    session = SessionContext(trace_id=state["trace_id"])
+    session = _session_from_state(state)
     intent = Intent(**state["intent"])
     manifest = ContextManifest(**state["context"])
     options = [PlanOption(**o) for o in state["options"]]

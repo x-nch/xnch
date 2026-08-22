@@ -80,3 +80,20 @@ def test_create_pipeline_wires_context_node_with_stores(
     monkeypatch.setattr(pg, "_make_context_node", spy)
     pg.create_pipeline(checkpointer=None, stores=fake_stores)
     assert captured["stores"] is fake_stores
+
+
+def test_session_from_state_builds_valid_context() -> None:
+    """All four pipeline nodes need a complete SessionContext from DecisionState."""
+    from uuid import UUID, uuid4
+
+    state = {
+        "session_id": str(uuid4()),
+        "trace_id": str(uuid4()),
+        "raw_input": "Deploy edge-proxy service",
+    }
+    session = pg._session_from_state(state)
+    assert session.session_id == UUID(state["session_id"])
+    assert session.trace_id == UUID(state["trace_id"])
+    assert session.raw_input == state["raw_input"]
+    assert session.actor.role.value in {"ADMIN", "OPERATOR", "VIEWER", "AGENT"}
+    assert session.idempotency_key is not None
