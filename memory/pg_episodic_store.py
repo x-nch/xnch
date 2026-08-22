@@ -84,6 +84,20 @@ CREATE TABLE IF NOT EXISTS patterns (
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS scraper_documents (
+    chunk_id    UUID PRIMARY KEY,
+    source_url  TEXT NOT NULL,
+    title       TEXT,
+    chunk_index INT NOT NULL DEFAULT 0,
+    total_chunks INT NOT NULL DEFAULT 1,
+    text        TEXT NOT NULL,
+    embedding   vector(384),
+    metadata    JSONB DEFAULT '{}',
+    tier        TEXT DEFAULT 'static',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_scraper_docs_url ON scraper_documents(source_url);
 """
 
 
