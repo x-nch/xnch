@@ -8,7 +8,9 @@ get_entity_by_name / query_entity_connections / upsert_entity / upsert_relation.
 
 from __future__ import annotations
 
+import logging
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +20,8 @@ from xnch.config import settings
 
 if TYPE_CHECKING:
     from xnch.memory.graph_broadcaster import GraphBroadcaster
+
+logger = logging.getLogger(__name__)
 
 ENTITIES_CATEGORY = "entities"
 RELATIONS_CATEGORY = "relations"
@@ -29,16 +33,35 @@ CREATE NODE TABLE IF NOT EXISTS entities (
     entity_id STRING PRIMARY KEY,
     name STRING,
     type STRING,
-    created_at TIMESTAMP DEFAULT current_timestamp()
+    created_at TIMESTAMP DEFAULT current_timestamp(),
+    valid_from TIMESTAMP,
+    invalidated_at TIMESTAMP,
+    source STRING
 );
 
 CREATE REL TABLE IF NOT EXISTS relations (
     FROM entities TO entities,
     rel_type STRING,
     confidence DOUBLE,
-    created_at TIMESTAMP DEFAULT current_timestamp()
+    created_at TIMESTAMP DEFAULT current_timestamp(),
+    valid_from TIMESTAMP,
+    invalidated_at TIMESTAMP,
+    source STRING
 );
 """
+
+_BITEMPORAL_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "entities": [
+        ("valid_from", "TIMESTAMP"),
+        ("invalidated_at", "TIMESTAMP"),
+        ("source", "STRING"),
+    ],
+    "relations": [
+        ("valid_from", "TIMESTAMP"),
+        ("invalidated_at", "TIMESTAMP"),
+        ("source", "STRING"),
+    ],
+}
 
 
 class GraphStore:
@@ -64,6 +87,24 @@ class GraphStore:
         self._db = kuzu.Database(str(self._dir))
         self._conn = kuzu.Connection(self._db)
         self._conn.execute(_SCHEMA)
+        self._ensure_bitemporal_columns()
+
+    def _ensure_bitemporal_columns(self) -> None:
+        if self._conn is None:
+            return
+        for table, columns in _BITEMPORAL_COLUMNS.items():
+            existing = _table_columns(self._conn, table)
+            for name, col_type in columns:
+                if name in existing:
+                    continue
+                try:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD {name} {col_type}"
+                    )
+                except Exception:
+                    logger.debug(
+                        "Could not add %s to %s (may already exist)", name, table
+                    )
 
     def close(self) -> None:
         with self._lock:
@@ -187,6 +228,8 @@ class GraphStore:
         to_id: str,
         rel_type: str,
         confidence: float,
+        valid_from: Any | None = None,
+        source: str | None = None,
     ) -> None:
         if self._conn is None:
             return
@@ -203,10 +246,25 @@ class GraphStore:
                     {"f": from_id, "rt": rel_type, "t": to_id, "c": float(confidence)},
                 )
             else:
+                create_params: dict[str, Any] = {
+                    "f": from_id,
+                    "t": to_id,
+                    "rt": rel_type,
+                    "c": float(confidence),
+                }
+                props = ["rel_type: $rt", "confidence: $c"]
+                if valid_from is not None:
+                    create_params["vf"] = _to_kuzu_ts(valid_from)
+                    props.append("valid_from: $vf")
+                else:
+                    props.append("valid_from: current_timestamp()")
+                if source is not None:
+                    create_params["src"] = source
+                    props.append("source: $src")
                 self._conn.execute(
-                    """MATCH (a:entities {entity_id: $f}), (b:entities {entity_id: $t})
-                       CREATE (a)-[:relations {rel_type: $rt, confidence: $c}]->(b)""",
-                    {"f": from_id, "rt": rel_type, "t": to_id, "c": float(confidence)},
+                    f"""MATCH (a:entities {{entity_id: $f}}), (b:entities {{entity_id: $t}})
+                       CREATE (a)-[:relations {{{", ".join(props)}}}]->(b)""",
+                    create_params,
                 )
         if self._relationship_store is not None:
             await self._relationship_store.upsert_relationship(
@@ -347,16 +405,16 @@ class GraphStore:
             result = self._conn.execute(
                 """MATCH (a:entities)-[r:relations]->(b:entities)
                    RETURN a.entity_id, a.name, b.entity_id, b.name,
-                          r.rel_type, r.confidence, r.created_at
+                          r.rel_type, r.confidence, r.created_at,
+                          r.valid_from, r.invalidated_at, r.source
                    ORDER BY r.created_at DESC, a.entity_id, b.entity_id
                    SKIP $offset LIMIT $limit""",
                 {"limit": limit, "offset": offset},
             )
             rows: list[dict[str, Any]] = []
             while result.has_next():
-                from_id, from_name, to_id, to_name, rel_type, confidence, created_at = (
-                    result.get_next()
-                )
+                (from_id, from_name, to_id, to_name, rel_type, confidence,
+                 created_at, valid_from, invalidated_at, source) = result.get_next()
                 rows.append(
                     {
                         "from_id": from_id,
@@ -366,6 +424,9 @@ class GraphStore:
                         "rel_type": rel_type,
                         "confidence": float(confidence),
                         "created_at": _ts_to_iso(created_at),
+                        "valid_from": _ts_to_iso(valid_from),
+                        "invalidated_at": _ts_to_iso(invalidated_at),
+                        "source": source,
                     }
                 )
         return rows
@@ -497,6 +558,22 @@ class GraphStore:
                     }
                 )
         return rows
+
+
+def _table_columns(conn: kuzu.Connection, table: str) -> set[str]:
+    result = conn.execute(f"CALL table_info('{table}') RETURN *")
+    cols: set[str] = set()
+    while result.has_next():
+        cols.add(str(result.get_next()[1]))
+    return cols
+
+
+def _to_kuzu_ts(value: Any) -> Any:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    return value
 
 
 def _ts_to_iso(value: Any) -> str | None:

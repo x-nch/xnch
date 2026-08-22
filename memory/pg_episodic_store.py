@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS scraper_documents (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_scraper_docs_url ON scraper_documents(source_url);
+
+CREATE TABLE IF NOT EXISTS session_ingest_ledger (
+    session_id  TEXT PRIMARY KEY,
+    episode_id  UUID,
+    status      TEXT NOT NULL,
+    facts_count INT DEFAULT 0,
+    error       TEXT,
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 
@@ -117,6 +126,89 @@ class PgEpisodicStore:
         if self._pool:
             await self._pool.close()
             self._pool = None
+
+    async def store_session_episode(
+        self,
+        raw_text: str | None = None,
+        summary: str | None = None,
+        embedding: list[float] | None = None,
+        importance: float = 1.0,
+        timestamp: datetime | None = None,
+        type_: str = "opencode_session",
+    ) -> str:
+        """Store an episode with an explicit event timestamp (session end)."""
+        memory_id = str(uuid.uuid4())
+        text = raw_text or summary or ""
+        if embedding is None and text:
+            embedding = embed_text(text[:512])
+        if not self._pool:
+            return memory_id
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO episodes
+                     (id, type, timestamp, raw_text, summary, embedding, importance)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                memory_id, type_, timestamp or datetime.now(timezone.utc),
+                raw_text or "", summary or "",
+                _to_vector(embedding), importance,
+            )
+        return memory_id
+
+    # ------------------------------------------------------------------ #
+    # Session-ingest ledger (idempotency for OpenCode session ingestion)
+    # ------------------------------------------------------------------ #
+
+    async def ledger_mark_done(
+        self, session_id: str, episode_id: str, facts_count: int = 0
+    ) -> None:
+        if not self._pool:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO session_ingest_ledger
+                     (session_id, episode_id, status, facts_count)
+                   VALUES ($1, $2, 'SUCCEEDED', $3)
+                   ON CONFLICT (session_id) DO UPDATE SET
+                     episode_id = EXCLUDED.episode_id,
+                     status = 'SUCCEEDED',
+                     facts_count = EXCLUDED.facts_count,
+                     error = NULL,
+                     ingested_at = now()""",
+                session_id, episode_id, int(facts_count),
+            )
+
+    async def ledger_mark_failed(self, session_id: str, error: str) -> None:
+        if not self._pool:
+            return
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO session_ingest_ledger
+                     (session_id, status, error) VALUES ($1, 'FAILED', $2)
+                   ON CONFLICT (session_id) DO UPDATE SET
+                     status = 'FAILED', error = EXCLUDED.error,
+                     ingested_at = now()""",
+                session_id, error,
+            )
+
+    async def ledger_completed_ids(self) -> set[str]:
+        if not self._pool:
+            return set()
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT session_id FROM session_ingest_ledger
+                   WHERE status = 'SUCCEEDED'"""
+            )
+        return {r["session_id"] for r in rows}
+
+    async def ledger_get(self, session_id: str) -> dict[str, Any] | None:
+        if not self._pool:
+            return None
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM session_ingest_ledger WHERE session_id = $1",
+                session_id,
+            )
+        return dict(row) if row else None
 
     # ------------------------------------------------------------------ #
     # Episodes (semantic + recent)
