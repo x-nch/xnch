@@ -112,7 +112,7 @@ async def test_classify_intent_emits_complete_payload(monkeypatch) -> None:
         return Intent(
             session_id=session_id,
             intent_class="EXECUTION",
-            action_type="apply",
+            action_type="DEPLOY",
             target_entity_id="edge-proxy",
             target_entity_class="service",
             urgency="NORMAL",
