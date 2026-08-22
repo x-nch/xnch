@@ -163,7 +163,15 @@ async def lifespan(app: FastAPI):
     if settings.langgraph_pipeline:
         from .agents.pipeline_runtime import PipelineRuntime
 
-        runtime = PipelineRuntime()
+        runtime = PipelineRuntime(
+            stores={
+                "working_memory": s.working_memory,
+                "pg_episodic": s.pg_episodic,
+                "graph_store": s.graph_store,
+                "relationship_store": s.relationship_store,
+                "sensory_buffer": s.sensory_buffer,
+            }
+        )
         await runtime.start(postgres_url=settings.postgres_url)
         s.pipeline_runtime = runtime
         logger.info("LangGraph pipeline ready (HITL mode=%s)", settings.hitl_execution_mode)

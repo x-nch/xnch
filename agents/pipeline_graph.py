@@ -40,22 +40,29 @@ async def classify_intent(state: DecisionState) -> dict[str, Any]:
     }
 
 
-async def assemble_context(state: DecisionState) -> dict[str, Any]:
+async def assemble_context(
+    state: DecisionState,
+    *,
+    working_memory: Any | None = None,
+    pg_episodic: Any | None = None,
+    graph_store: Any | None = None,
+    relationship_store: Any | None = None,
+    sensory_buffer: Any | None = None,
+) -> dict[str, Any]:
     """Node: assemble context (maps from context_assembler.py).
 
-    Stores are injected via runtime config — pass None here and let
-    the caller wire them in through create_pipeline(stores=...).
+    Stores are bound at compile time by _make_context_node(stores).
     """
     from nexi.pipeline.context_assembler import assemble_context as _assemble
 
     ctx = await _assemble(
         session_id=state["session_id"],
         raw_input=state["raw_input"],
-        working_memory=None,
-        pg_episodic=None,
-        graph_store=None,
-        relationship_store=None,
-        sensory_buffer=None,
+        working_memory=working_memory,
+        pg_episodic=pg_episodic,
+        graph_store=graph_store,
+        relationship_store=relationship_store,
+        sensory_buffer=sensory_buffer,
     )
     return {
         "context": {
@@ -240,12 +247,27 @@ async def dispatch(state: DecisionState) -> dict[str, Any]:
     }
 
 
+def _make_context_node(stores: dict[str, Any] | None) -> Any:
+    """Bind real stores into assemble_context at graph compile time."""
+    from functools import partial
+
+    st = stores or {}
+    return partial(
+        assemble_context,
+        working_memory=st.get("working_memory"),
+        pg_episodic=st.get("pg_episodic"),
+        graph_store=st.get("graph_store"),
+        relationship_store=st.get("relationship_store"),
+        sensory_buffer=st.get("sensory_buffer"),
+    )
+
+
 def create_pipeline(checkpointer=None, stores: dict[str, Any] | None = None):
     """Build and compile the LangGraph decision pipeline."""
     graph = StateGraph(DecisionState)
 
     graph.add_node("classify_intent", classify_intent)
-    graph.add_node("assemble_context", assemble_context)
+    graph.add_node("assemble_context", _make_context_node(stores))
     graph.add_node("generate_options", generate_options)
     graph.add_node("filter_policy", filter_policy)
     graph.add_node("evaluate", evaluate)

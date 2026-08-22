@@ -39,7 +39,7 @@ def _stub_pipeline_nodes(monkeypatch: pytest.MonkeyPatch) -> None:
             "events": [{"type": "intent_classified"}],
         }
 
-    async def assemble_context(state: dict[str, Any]) -> dict[str, Any]:
+    async def assemble_context(state: dict[str, Any], **_stores: Any) -> dict[str, Any]:
         return {"context": {"system_prompt": "", "recent_turns": [], "relevant_episodes": [], "entity_context": [], "relationship_context": [], "perception_snippets": []}}
 
     async def generate_options(state: dict[str, Any]) -> dict[str, Any]:

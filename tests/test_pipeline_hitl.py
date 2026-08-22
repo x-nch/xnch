@@ -39,7 +39,7 @@ def stubbed_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
             "events": [{"type": "intent_classified"}],
         }
 
-    async def assemble_context(state: dict[str, Any]) -> dict[str, Any]:
+    async def assemble_context(state: dict[str, Any], **_stores: Any) -> dict[str, Any]:
         return {
             "context": {
                 "system_prompt": "",
