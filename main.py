@@ -1,8 +1,10 @@
 """xnch-server v0 — governance, memory, and authorization service."""
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from starlette.requests import Request
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
@@ -14,12 +16,13 @@ from .learning.evolution import WeightEvolver, PolicyRuleEvolver
 from .memory import init_db, EpisodicStore, PatternStore, KVCache, PgEpisodicStore
 from .memory import SensoryBuffer, WorkingMemory, GraphStore, RelationshipStore
 from .memory.experience_store import ExperienceStore
+from .memory.goal_store import GoalStore
 from .memory.db import get_state_version, get_policy_version, increment_state_version
 from .policy import PolicyLoader, PolicyEngine
 from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
-    nexi_gateway_router, chat_router, admin_router, voice_router,
+    nexi_gateway_router, chat_router, admin_router, voice_router, goal_router,
 )
 from xnch_mcp.http_router import router as mcp_router
 
@@ -49,6 +52,7 @@ async def lifespan(app: FastAPI):
     s.episodic = EpisodicStore(settings.db_path)
     s.pattern_store = PatternStore(settings.db_path)
     s.experience_store = ExperienceStore(settings.db_path)
+    s.goal_store = GoalStore(settings.db_path)
     s.kv_cache = KVCache(settings.redis_url)
 
     # Audit
@@ -68,6 +72,7 @@ async def lifespan(app: FastAPI):
 
     # Scraper document store (pgvector-backed, shares pg_episodic pool)
     from scraper.pipeline.store import ScraperDocumentStore
+
     s.scraped_store = ScraperDocumentStore(s.pg_episodic._pool)
 
     # Layer 0 — Sensory buffer (Redis perception signals)
@@ -183,6 +188,7 @@ app.include_router(nexi_gateway_router)
 app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(voice_router)
+app.include_router(goal_router)
 app.include_router(mcp_router)
 
 
@@ -203,6 +209,25 @@ async def system_state(request: Request) -> dict:
     state_version = await request.app.state.get_state_version()
     policy_version = await request.app.state.get_policy_version()
     return {"system_state_version": state_version, "policy_version": policy_version}
+
+
+async def _probe_vllm() -> tuple[bool, int | None]:
+    """GET the configured vLLM health URL; return (available, latency_ms)."""
+    start = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=settings.llm_probe_timeout_s) as client:
+            resp = await client.get(settings.llm_status_url)
+    except httpx.HTTPError:
+        return False, None
+    available = resp.status_code == 200
+    latency_ms = int((time.perf_counter() - start) * 1000) if available else None
+    return available, latency_ms
+
+
+@app.get("/system/llm-status")
+async def llm_status() -> dict:
+    available, latency_ms = await _probe_vllm()
+    return {"available": available, "model": settings.llm_model_id, "latency_ms": latency_ms}
 
 
 def _sync_policies(s) -> None:

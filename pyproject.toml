@@ -25,6 +25,7 @@ dependencies = [
     "llama-cpp-python>=0.2.90",
     "mcp>=1.0",
     "anyio>=4.0",
+    "langgraph>=0.2",
     # scraper pipeline (shared with root scraper/)
     "trafilatura>=2.0",
     "markdownify>=0.13",

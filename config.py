@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # LiteLLM proxy
     litellm_proxy_url: str = "http://litellm:4000"
 
+    # LLM availability probe (vLLM ornith on node-b)
+    llm_status_url: str = "http://192.168.50.2:8082/health"
+    llm_model_id: str = "ornith-1.0-35b"
+    llm_probe_timeout_s: float = 3.0
+
     # Graph extractor (remote via LiteLLM proxy by default; opt into the
     # in-process llama.cpp backend with XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>)
     graph_extractor_model: str = "ornith"

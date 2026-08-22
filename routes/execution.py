@@ -1,5 +1,6 @@
 """Step 11-13: execution dispatch stub and outcome recording."""
 import asyncio
+import hashlib
 import json
 import logging
 from typing import Any
@@ -23,16 +24,45 @@ class ExecutionOutcomeRequest(BaseModel):
     side_effects_observed: list[str] = []
     duration_ms: int = 0
     anomalies: list[str] = []
+    goal_id: str = ""
+
+
+def simulate_outcome(action_type: str, params: dict[str, Any]) -> str:
+    """Deterministically simulate an execution outcome from (action_type, params)."""
+    digest = hashlib.sha256(
+        json.dumps({"action_type": action_type, "params": params}, sort_keys=True).encode()
+    ).hexdigest()
+    return "SUCCESS" if int(digest[:2], 16) % 2 == 0 else "FAILURE"
+
+
+def _normalize_outcome(value: str) -> str:
+    """Normalize a simulation override to the UPPERCASE complete_step form.
+
+    Maps ``success→SUCCESS``, ``fail→FAILURE``, ``partial→PARTIAL``
+    (case-insensitive); ``FAIL`` is the only alias that does not map 1:1.
+    """
+    upper = value.strip().upper()
+    return "FAILURE" if upper == "FAIL" else upper
 
 
 @router.post("/execute")
 async def execute_stub(body: dict[str, Any], request: Request) -> dict[str, Any]:
-    """Stub execution runner — records SUCCESS and completes the decision episode."""
+    """Stub execution runner — resolves a simulation override or a deterministic hash."""
+    action_spec = body.get("action_spec") or {}
+    sim = body.get("simulation") or {}
+    outcome_override = sim.get("outcome")
+    if outcome_override is not None:
+        status = _normalize_outcome(str(outcome_override))
+    else:
+        status = simulate_outcome(
+            action_spec.get("type", ""), action_spec.get("params", {}) or {}
+        )
     outcome = ExecutionOutcomeRequest(
         execution_ref=str(body.get("execution_ref", "")),
         decision_id=str(body.get("decision_id", "")),
         execution_token_ref=str(body.get("execution_token", "")),
-        outcome_status="SUCCESS",
+        outcome_status=status,
+        goal_id=str(body.get("goal_id") or ""),
         duration_ms=50,
     )
     return await execution_outcome(outcome, request)
@@ -67,6 +97,12 @@ async def execution_outcome(body: ExecutionOutcomeRequest, request: Request) -> 
     asyncio.create_task(
         _fire_nexi_callback(body, episode_id, app)
     )
+
+    if body.goal_id:
+        try:
+            await app.goal_store.complete_step(body.goal_id, body.outcome_status)
+        except Exception as exc:
+            logger.error("goal advance failed (goal_id=%s): %s", body.goal_id, exc)
 
     return {"status": "ok", "episode_id": episode_id}
 

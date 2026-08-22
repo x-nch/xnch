@@ -128,6 +128,7 @@ async def verdict(body: VerdictRequest, request: Request) -> dict[str, Any]:
         "session_id": ctx.get("session_id", ""),
         "actor_id": resolved.id,
         "outcome_score_predicted": ctx.get("outcome_score_predicted", 0.5),
+        "goal_id": ctx.get("goal_id", ""),
     }
     await app.episodic.create_episode(
         decision_id=body.request_id,

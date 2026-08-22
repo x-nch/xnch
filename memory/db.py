@@ -105,6 +105,28 @@ CREATE TABLE IF NOT EXISTS experiences (
 CREATE INDEX IF NOT EXISTS idx_experiences_tuple
     ON experiences(intent_class, entity_class, actor_role);
 
+CREATE TABLE IF NOT EXISTS goals (
+    goal_id             TEXT PRIMARY KEY,
+    owner_actor_id      TEXT NOT NULL,
+    objective           TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'PENDING',
+    progress            TEXT NOT NULL DEFAULT '',
+    steps_completed     INTEGER NOT NULL DEFAULT 0,
+    max_steps           INTEGER NOT NULL DEFAULT 10,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    failure_threshold   INTEGER NOT NULL DEFAULT 3,
+    last_step_outcome   TEXT,
+    next_due_at         REAL,
+    lease_owner         TEXT,
+    lease_expires_at    REAL,
+    simulation_plan     TEXT,
+    created_at          REAL NOT NULL DEFAULT (unixepoch()),
+    updated_at          REAL NOT NULL DEFAULT (unixepoch()),
+    schema_version      TEXT DEFAULT 'goal-v1'
+);
+
+CREATE INDEX IF NOT EXISTS idx_goals_due ON goals(status, next_due_at);
+
 CREATE TABLE IF NOT EXISTS system_state (
     key     TEXT PRIMARY KEY,
     value   TEXT NOT NULL
