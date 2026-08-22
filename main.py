@@ -23,6 +23,7 @@ from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
     nexi_gateway_router, chat_router, admin_router, voice_router, goal_router,
+    pipeline_router,
 )
 from xnch_mcp.http_router import router as mcp_router
 
@@ -157,6 +158,16 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     s.scheduler = scheduler
 
+    # LangGraph decision pipeline with HITL (opt-in)
+    s.pipeline_runtime = None
+    if settings.langgraph_pipeline:
+        from .agents.pipeline_runtime import PipelineRuntime
+
+        runtime = PipelineRuntime()
+        await runtime.start(postgres_url=settings.postgres_url)
+        s.pipeline_runtime = runtime
+        logger.info("LangGraph pipeline ready (HITL mode=%s)", settings.hitl_execution_mode)
+
     s.event_log.emit("startup", "xnch", "SERVER_STARTED", data={"version": "0.1.0"})
     logger.info("xnch-server started")
 
@@ -167,6 +178,10 @@ async def lifespan(app: FastAPI):
         set_bridge_pool(None)
 
     scheduler.shutdown(wait=False)
+
+    if getattr(s, "pipeline_runtime", None) is not None:
+        await s.pipeline_runtime.stop()
+
     await s.kv_cache.aclose()
     await s.sensory_buffer.aclose()
     await s.working_memory.aclose()
@@ -189,6 +204,7 @@ app.include_router(chat_router)
 app.include_router(admin_router)
 app.include_router(voice_router)
 app.include_router(goal_router)
+app.include_router(pipeline_router)
 app.include_router(mcp_router)
 
 

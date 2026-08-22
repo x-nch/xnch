@@ -10,10 +10,11 @@ from .nexi_gateway import router as nexi_gateway_router
 from .chat import router as chat_router
 from .voice import router as voice_router
 from .goals import router as goal_router
+from .pipeline import router as pipeline_router
 
 __all__ = [
     "session_router", "memory_router", "policy_router",
     "verdict_router", "execution_router", "governance_router",
     "auth_router", "nexi_gateway_router", "chat_router", "admin_router",
-    "voice_router", "goal_router",
+    "voice_router", "goal_router", "pipeline_router",
 ]

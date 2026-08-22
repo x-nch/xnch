@@ -26,6 +26,8 @@ dependencies = [
     "mcp>=1.0",
     "anyio>=4.0",
     "langgraph>=0.2",
+    "langgraph-checkpoint-postgres>=2.0",
+    "psycopg[binary]>=3.1",
     # scraper pipeline (shared with root scraper/)
     "trafilatura>=2.0",
     "markdownify>=0.13",

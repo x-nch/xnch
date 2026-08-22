@@ -12,7 +12,7 @@ from langgraph.types import interrupt
 
 from ..config import settings
 from .decision_state import DecisionState
-from .hitl import should_interrupt_execution
+from .hitl import normalize_resume, should_interrupt_execution
 
 
 async def classify_intent(state: DecisionState) -> dict[str, Any]:
@@ -199,11 +199,11 @@ async def select(state: DecisionState) -> dict[str, Any]:
         mode=settings.hitl_execution_mode,
         risk_threshold=settings.hitl_risk_threshold,
     ):
-        approved = interrupt({
+        approved = normalize_resume(interrupt({
             "action": "approve_execution",
             "selected": selected_option,
             "intent": state["intent"],
-        })
+        }))
         if not approved:
             return {"selected": None, "events": [{"type": "execution_rejected"}]}
 
