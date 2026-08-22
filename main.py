@@ -155,6 +155,18 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(s.weight_evolver.run, "cron", hour="*/6", minute=30, id="weight_evolver")
     scheduler.add_job(s.policy_evolver.run, "cron", hour="*/6", minute=45, id="policy_evolver")
     scheduler.add_job(s.policy_candidates.run, "cron", hour="*/6", minute=50, id="policy_candidates")
+
+    if settings.session_ingest_scheduled:
+        from .jobs.session_ingest import run_incremental_ingest
+
+        scheduler.add_job(
+            run_incremental_ingest,
+            "cron",
+            minute=settings.session_ingest_cron_minute,
+            id="session_ingest",
+            kwargs={"pg_episodic": s.pg_episodic, "graph_store": s.graph_store},
+        )
+
     scheduler.start()
     s.scheduler = scheduler
 

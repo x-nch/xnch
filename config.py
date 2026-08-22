@@ -90,6 +90,16 @@ class Settings(BaseSettings):
     # in-process llama.cpp backend with XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>)
     graph_extractor_model: str = "ornith"
 
+    # Session ingest (OpenCode SQLite logs -> episodic + semantic tiers)
+    session_ingest_db_path: Path = Path(
+        "~/.local/share/opencode/opencode.db"
+    ).expanduser()
+    session_ingest_model: str = "ornith"
+    session_ingest_max_tokens: int = 4096
+    session_ingest_project_dirs: str = ""
+    session_ingest_scheduled: bool = True
+    session_ingest_cron_minute: int = 15
+
     # Perception
     vault_dir: Path = Path("~/.xnch/vault").expanduser()
     perception_redis_db: int = 0
