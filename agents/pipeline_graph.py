@@ -155,6 +155,7 @@ async def evaluate(state: DecisionState) -> dict[str, Any]:
         v_data = opt_map.get(str(opt.option_id), {})
         verdict = PolicyDryRunResponse(
             option_id=opt.option_id,
+            session_id=v_data.get("session_id", state["session_id"]),
             verdict=v_data.get("verdict", "ALLOW"),
             policy_refs=v_data.get("policy_refs", []),
             warnings=v_data.get("warnings", []),

@@ -136,3 +136,44 @@ async def test_classify_intent_emits_complete_payload(monkeypatch) -> None:
     assert payload["session_id"] == sid
     assert payload["raw_input_hash"].startswith("sha256:")
     json.dumps(payload)
+
+
+async def test_evaluate_passes_session_id_into_verdict(monkeypatch) -> None:
+    """evaluate must rebuild PolicyDryRunResponse including session_id."""
+    from uuid import uuid4
+
+    captured: dict = {}
+
+    class FakeEvaluator:
+        def score(self, *, options, intent, manifest, session):
+            captured["session"] = session
+            return []
+
+    monkeypatch.setattr("nexi.pipeline.evaluator.Evaluator", FakeEvaluator)
+    sid = "11111111-1111-1111-1111-111111111111"
+    await pg.evaluate({
+        "session_id": sid,
+        "trace_id": str(uuid4()),
+        "raw_input": "x",
+        "intent": {
+            "session_id": sid,
+            "intent_class": "EXECUTION", "action_type": "DEPLOY",
+            "target_entity_id": "e", "target_entity_class": "service",
+            "urgency": "NORMAL", "ambiguity_score": 0.0,
+            "raw_input_hash": "sha256:x", "raw_input": "x",
+        },
+        "context": {"session_id": sid, "system_state_version": ""},
+        "options": [{
+            "option_id": "22222222-2222-2222-2222-222222222222",
+            "action_type": "DEPLOY", "action_spec": {"type": "DEPLOY", "target": "edge-proxy", "params": {}},
+            "stated_rationale": "deploy request", "reversible": True,
+            "payload_hash": "sha256:y", "estimated_side_effects": [],
+        }],
+        "policy_verdicts": [{
+            "option_id": "22222222-2222-2222-2222-222222222222",
+            "session_id": sid,
+            "verdict": "ALLOW", "policy_refs": [], "warnings": [],
+            "modified_action_spec": None,
+        }],
+    })
+    assert str(captured["session"].session_id) == sid
