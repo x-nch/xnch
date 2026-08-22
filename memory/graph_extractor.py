@@ -181,6 +181,43 @@ def _normalize_entity(e: Any) -> dict[str, str] | None:
     return None
 
 
+def _parse_triples_json(content: str) -> list[dict[str, Any]]:
+    """Parse triples from LLM output, preferring the last complete JSON array.
+
+    Reasoning models emit a draft array mid-chain-of-thought before the final
+    answer; first/last-bracket slicing splices the two together and fails with
+    Extra data. Instead, scan candidate '[' positions with raw_decode() and
+    keep the last valid list (dict-valued lists win over citation noise like
+    "[1]").
+    """
+    content = content.strip()
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    last_match: list | None = None
+    idx = content.find("[")
+    while idx != -1:
+        try:
+            value, end = decoder.raw_decode(content, idx)
+        except json.JSONDecodeError:
+            idx = content.find("[", idx + 1)
+            continue
+        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+            last_match = value
+        idx = content.find("[", max(idx + 1, end))
+    if last_match is not None:
+        return last_match
+    logger.warning(
+        "LLM returned no parseable JSON array (%d chars); treating as no triples",
+        len(content),
+    )
+    return []
+
+
 async def _extract_litellm(text: str) -> list[dict[str, Any]]:
     """Extract triples via the LiteLLM proxy's OpenAI-compatible endpoint.
 
@@ -229,17 +266,7 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
     content = resp.json()["choices"][0]["message"]["content"].strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        first, last = content.find("["), content.rfind("]")
-        if first != -1 and last > first:
-            return json.loads(content[first : last + 1])
-        logger.warning(
-            "LLM returned no parseable JSON (%d chars); treating as no triples",
-            len(content),
-        )
-        return []
+    return _parse_triples_json(content)
 
 
 async def _extract_ollama(text: str) -> list[dict[str, Any]]:

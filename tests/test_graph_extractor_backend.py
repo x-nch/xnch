@@ -215,3 +215,54 @@ class TestNormalizeTriple:
     def test_returns_none_for_empty_entity(self):
         t = {"subject": "", "relation": "r", "object": {"id": "b", "name": "B", "type": "svc"}}
         assert gmod._normalize_triple(t) is None
+
+
+class TestParseTriplesJson:
+    """Robust extraction: reasoning models emit draft arrays before the final one."""
+
+    ARR = '[{"subject": {"id": "a", "name": "A", "type": "svc"}, "relation": "uses", "object": {"id": "b", "name": "B", "type": "svc"}}]'
+    DRAFT = '[{"subject": {"id": "x", "name": "X", "type": "?"}, "relation": "maybe", "object": {"id": "y", "name": "Y", "type": "?"}}]'
+
+    def _cot(self) -> str:
+        return (
+            "Here's a thinking process:\n"
+            f"draft: {self.DRAFT}\n"
+            "hmm, relation should be uses not maybe...\n"
+            f"Final answer:\n{self.ARR}\n"
+            "This extracts the service dependency."
+        )
+
+    def test_cot_draft_then_final_array_wins(self):
+        result = gmod._parse_triples_json(self._cot())
+        assert len(result) == 1
+        assert result[0]["relation"] == "uses"
+
+    def test_single_array_in_prose(self):
+        result = gmod._parse_triples_json(f"Sure:\n{self.ARR}")
+        assert result[0]["relation"] == "uses"
+
+    def test_plain_array_passthrough(self):
+        assert gmod._parse_triples_json(self.ARR)[0]["relation"] == "uses"
+
+    def test_object_wrapper_not_returned_as_triples(self):
+        assert gmod._parse_triples_json('{"triples": [1,2]}') == []
+
+    def test_no_arrays_returns_empty(self):
+        assert gmod._parse_triples_json("I cannot help with that.") == []
+
+    def test_citation_noise_does_not_beat_real_array(self):
+        result = gmod._parse_triples_json(f"{self.ARR}\nSee refs [1] and [2] for details.")
+        assert len(result) == 1
+        assert result[0]["relation"] == "uses"
+
+    def test_extra_data_case_from_live_failure(self):
+        content = (
+            "Here's a thinking process:\n"
+            f"{self.DRAFT}\n"
+            f"{self.ARR}\n"
+            "trailing prose"
+        )
+        result = gmod._parse_triples_json(content)
+        assert result[0]["relation"] == "uses"
+
+
