@@ -10,7 +10,9 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from ..config import settings
 from .decision_state import DecisionState
+from .hitl import should_interrupt_execution
 
 
 async def classify_intent(state: DecisionState) -> dict[str, Any]:
@@ -191,7 +193,12 @@ async def select(state: DecisionState) -> dict[str, Any]:
                 selected_option = o.model_dump()
                 break
 
-    if state["intent"].get("intent_class") == "EXECUTION":
+    if state["intent"].get("intent_class") == "EXECUTION" and should_interrupt_execution(
+        intent_class="EXECUTION",
+        evaluated=state.get("evaluated"),
+        mode=settings.hitl_execution_mode,
+        risk_threshold=settings.hitl_risk_threshold,
+    ):
         approved = interrupt({
             "action": "approve_execution",
             "selected": selected_option,
@@ -233,7 +240,7 @@ async def dispatch(state: DecisionState) -> dict[str, Any]:
     }
 
 
-def create_pipeline(checkpointer=None):
+def create_pipeline(checkpointer=None, stores: dict[str, Any] | None = None):
     """Build and compile the LangGraph decision pipeline."""
     graph = StateGraph(DecisionState)
 

@@ -126,6 +126,11 @@ class Settings(BaseSettings):
     memory_routing_policy_path: Path = Path("~/.xnch/memory-routing.yaml").expanduser()
     am_prefetch_enabled: bool = False
 
+    # HITL gate on the LangGraph decision pipeline
+    langgraph_pipeline: bool = False
+    hitl_execution_mode: str = "always"
+    hitl_risk_threshold: float = 0.5
+
     # Voice (STT + TTS on gate7 CPU)
     voice_enabled: bool = True
     voice_stt_model: str = "base"
