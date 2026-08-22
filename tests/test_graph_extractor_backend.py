@@ -71,22 +71,33 @@ class TestExtractionPrompt:
 
 
 class TestLiteLLMProxyModel:
-    """Bare model names get an openai/ prefix when routed via the proxy."""
+    """Proxy model ids are authoritative: sent verbatim; provider prefixing is opt-in."""
 
-    async def test_does_not_prefix_provider_qualified_model(self):
+    def _settings(self, mock_settings, model="ornith", hint=""):
+        mock_settings.graph_extractor_model = model
+        mock_settings.graph_extractor_provider_hint = hint
+        mock_settings.litellm_proxy_url = "http://localhost:4000"
+
+    async def test_bare_model_sent_verbatim(self):
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ollama/phi3:mini"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            self._settings(mock_settings, model="ornith")
+            mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
+            await gmod._extract_litellm("text")
+            assert mock.await_args.kwargs["model"] == "ornith"
+
+    async def test_provider_qualified_model_sent_verbatim(self):
+        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
+             patch("xnch.config.settings") as mock_settings:
+            self._settings(mock_settings, model="ollama/phi3:mini")
             mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
             await gmod._extract_litellm("text")
             assert mock.await_args.kwargs["model"] == "ollama/phi3:mini"
 
-    async def test_prefixes_bare_model_with_openai(self):
+    async def test_provider_hint_opt_in_prefixes(self):
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            self._settings(mock_settings, model="ornith", hint="openai")
             mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
             await gmod._extract_litellm("text")
             assert mock.await_args.kwargs["model"] == "openai/ornith"
@@ -94,8 +105,7 @@ class TestLiteLLMProxyModel:
     async def test_truncates_long_episode(self):
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            self._settings(mock_settings)
             mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
             await gmod._extract_litellm("x" * 12000)
             sent = mock.await_args.kwargs["messages"][1]["content"]
@@ -105,8 +115,7 @@ class TestLiteLLMProxyModel:
     async def test_recovers_json_array_from_prose(self):
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            self._settings(mock_settings)
             mock.return_value.choices = [MagicMock(message=MagicMock(
                 content='Here is the result:\n[{"subject": {"id": "a", "name": "A", "type": "svc"}, "relation": "uses", "object": {"id": "b", "name": "B", "type": "svc"}}]\nDone!'
             ))]
@@ -119,8 +128,7 @@ class TestLiteLLMProxyModel:
         (mark the episode done) rather than re-raising and retrying forever."""
         with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
              patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
+            self._settings(mock_settings)
             mock.return_value.choices = [MagicMock(message=MagicMock(
                 content="I'm sorry, I cannot extract triples from this text."
             ))]
