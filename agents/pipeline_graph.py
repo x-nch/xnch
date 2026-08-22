@@ -126,15 +126,7 @@ async def filter_policy(state: DecisionState) -> dict[str, Any]:
 
     surviving = await filter_.filter(session=session, options=options)
 
-    verdicts = []
-    for opt, resp in surviving:
-        verdicts.append({
-            "option_id": str(resp.option_id),
-            "verdict": resp.verdict,
-            "policy_refs": resp.policy_refs,
-            "warnings": resp.warnings,
-            "modified_action_spec": resp.modified_action_spec,
-        })
+    verdicts = [resp.model_dump(mode="json") for _, resp in surviving]
     return {"policy_verdicts": verdicts}
 
 
