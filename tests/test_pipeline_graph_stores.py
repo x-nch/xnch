@@ -54,8 +54,11 @@ async def test_assemble_context_receives_injected_stores(
         "nexi.pipeline.context_assembler.assemble_context", fake_assemble
     )
     node = pg._make_context_node(fake_stores)
-    await node(_state())
+    st = _state()
+    out = await node(st)
 
+    assert out["context"]["session_id"] == st["session_id"]
+    assert "system_state_version" in out["context"]
     for name, store in fake_stores.items():
         assert captured[name] is store, f"{name} not injected"
 

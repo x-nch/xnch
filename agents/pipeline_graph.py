@@ -75,6 +75,8 @@ async def assemble_context(
     )
     return {
         "context": {
+            "session_id": state["session_id"],
+            "system_state_version": state.get("system_state_version", ""),
             "system_prompt": ctx.system_prompt,
             "recent_turns": ctx.recent_turns,
             "relevant_episodes": ctx.relevant_episodes,
