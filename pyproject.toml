@@ -25,6 +25,15 @@ dependencies = [
     "llama-cpp-python>=0.2.90",
     "mcp>=1.0",
     "anyio>=4.0",
+    # scraper pipeline (shared with root scraper/)
+    "trafilatura>=2.0",
+    "markdownify>=0.13",
+    "beautifulsoup4>=4.12",
+    "crawlee>=0.6",
+    # embeddings (shared with scraper embed re-export)
+    "onnxruntime>=1.17",
+    "numpy>=1.26",
+    "tokenizers>=0.15",
 ]
 
 [project.optional-dependencies]

@@ -2,6 +2,20 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+class ScraperSettings(BaseSettings):
+    """Scraper-specific config. Env vars prefixed with SCRAPER_."""
+
+    model_config = SettingsConfigDict(env_prefix="SCRAPER_")
+
+    default_tier: str = "auto"
+    max_concurrent: int = 5
+    request_timeout: float = 30.0
+    instagram_session: str | None = None
+    twitter_username: str | None = None
+    twitter_password: str | None = None
+    twitter_email: str | None = None
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="XNCH_", env_file=".env")
 
@@ -118,6 +132,9 @@ class Settings(BaseSettings):
     voice_max_audio_bytes: int = 10_485_760
     voice_max_tts_chars: int = 2000
     voice_models_dir: Path = Path("~/.xnch/voice/models").expanduser()
+
+    # Scraper
+    scraper: ScraperSettings = ScraperSettings()
 
 
 settings = Settings()
