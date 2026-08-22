@@ -17,6 +17,7 @@ import json
 import logging
 from typing import Any
 
+import httpx
 import litellm
 
 from xnch.config import settings
@@ -181,38 +182,51 @@ def _normalize_entity(e: Any) -> dict[str, str] | None:
 
 
 async def _extract_litellm(text: str) -> list[dict[str, Any]]:
-    """Extract triples via the LiteLLM proxy (default remote backend)."""
+    """Extract triples via the LiteLLM proxy's OpenAI-compatible endpoint.
+
+    The proxy's model ids are authoritative, so the configured id is sent
+    verbatim; the litellm SDK is bypassed because its client-side router
+    rejects bare ids (LLM Provider NOT provided).
+    """
+    import os
+
+    from xnch.config import settings as xnch_settings
+
+    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
+    api_base = xnch_settings.litellm_proxy_url.rstrip("/")
+    model = xnch_settings.graph_extractor_model
+    provider_hint = xnch_settings.graph_extractor_provider_hint
+    if provider_hint:
+        model = f"{provider_hint}/{model}"
+    if len(text) > 6000:
+        text = text[:6000] + "\n...[truncated]"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
-        import os
-
-        from xnch.config import settings as xnch_settings
-
-        api_key = os.environ.get("LITELLM_MASTER_KEY", "")
-        api_base = xnch_settings.litellm_proxy_url.rstrip("/")
-        model = xnch_settings.graph_extractor_model
-        provider_hint = xnch_settings.graph_extractor_provider_hint
-        if provider_hint:
-            model = f"{provider_hint}/{model}"
-        if len(text) > 6000:
-            text = text[:6000] + "\n...[truncated]"
-        resp = await litellm.acompletion(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an entity-relation extractor. Return valid JSON only.",
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{api_base}/v1/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an entity-relation extractor. Return valid JSON only.",
+                        },
+                        {"role": "user", "content": _EXTRACTION_PROMPT.format(raw_text=text)},
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 4096,
                 },
-                {"role": "user", "content": _EXTRACTION_PROMPT.format(raw_text=text)},
-            ],
-            api_base=api_base,
-            api_key=api_key,
-            temperature=0.1,
-            max_tokens=4096,
-        )
+                headers=headers,
+            )
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"LiteLLM proxy returned {resp.status_code}: {resp.text[:200]}"
+            )
     except Exception:
         logger.exception("LiteLLM extraction failed for episode text")
         raise
-    content = resp.choices[0].message.content.strip()
+    content = resp.json()["choices"][0]["message"]["content"].strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
     try:
