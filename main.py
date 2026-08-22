@@ -70,6 +70,11 @@ async def lifespan(app: FastAPI):
     s.pg_episodic = PgEpisodicStore(settings.postgres_url)
     await s.pg_episodic.connect()
 
+    # Scraper document store (pgvector-backed, shares pg_episodic pool)
+    from scraper.pipeline.store import ScraperDocumentStore
+
+    s.scraped_store = ScraperDocumentStore(s.pg_episodic._pool)
+
     # Layer 0 — Sensory buffer (Redis perception signals)
     s.sensory_buffer = SensoryBuffer(settings.redis_url)
 
