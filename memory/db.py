@@ -194,6 +194,22 @@ CREATE TABLE IF NOT EXISTS approvals (
 CREATE INDEX IF NOT EXISTS idx_approvals_status_exp ON approvals(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_producer ON approvals(producer_type, created_at);
 
+-- Agent dispatch runs: tasks queued for external coding-agent runners.
+CREATE TABLE IF NOT EXISTS agent_runs (
+    id               TEXT PRIMARY KEY,
+    status           TEXT NOT NULL CHECK (status IN ('QUEUED','RUNNING','DONE','FAILED')),
+    prompt           TEXT NOT NULL,
+    workspace        TEXT NOT NULL,
+    runner_id        TEXT,
+    lease_expires_at REAL,
+    exit_code        INTEGER,
+    output_path      TEXT,
+    error            TEXT,
+    created_at       REAL NOT NULL DEFAULT (unixepoch()),
+    updated_at       REAL NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status, created_at);
+
 -- Step events: append-only audit trail. Never UPDATEd, never DELETEd.
 CREATE TABLE IF NOT EXISTS step_events (
     seq            INTEGER PRIMARY KEY AUTOINCREMENT,
