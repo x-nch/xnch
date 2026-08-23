@@ -74,7 +74,7 @@ async def test_workflow_and_goal_approvals_share_one_queue(tmp_path):
     wf_events = await store.step_events(rows[0]["step_uuid"])
     assert [e["event_type"] for e in wf_events] == ["RUN_CREATED", "APPROVED"]
     goal_events = await store.step_events(goal_approval["producer_id"])
-    assert [e["event_type"] for e in goal_events] == ["CREATED", "APPROVED"]
+    assert [e["event_type"] for e in goal_events] == ["FILED", "APPROVED"]
     created_snapshot = json.loads(goal_events[0]["snapshot_json"])
     assert created_snapshot["summary"] == "Ship weekly digest"
     assert wf_step_uuid  # payload linkage intact for UI drill-down
@@ -110,7 +110,7 @@ async def test_decisions_from_both_producers_land_in_one_chronology(tmp_path):
     )
 
     goal_events = await store.step_events(goal_approval["producer_id"])
-    assert [e["event_type"] for e in goal_events] == ["CREATED", "APPROVED"]
+    assert [e["event_type"] for e in goal_events] == ["FILED", "APPROVED"]
     assert goal_events[-1]["actor"] == "a1"
 
     rows = await store.get_run_step_rows(

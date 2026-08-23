@@ -791,14 +791,6 @@ class WorkflowStore:
                 goal_id, "FILED", actor="goal_dispatch",
                 snapshot=payload, db=db,
             )
-            # Symmetric audit: goal_step births are recorded just like
-            # workflow steps' RUN_CREATED, so execution history is durable
-            # before any decision exists.
-            await db.execute(
-                "INSERT INTO step_events (step_uuid, event_type, actor, ts,"
-                " snapshot_json) VALUES (?, 'CREATED', 'system', ?, ?)",
-                (goal_id, now, json.dumps(payload)),
-            )
             await db.commit()
         row = await self.get_approval(approval_id)
         assert row is not None
