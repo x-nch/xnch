@@ -17,6 +17,7 @@ import json
 import logging
 from typing import Any
 
+import httpx
 import litellm
 
 from xnch.config import settings
@@ -52,7 +53,10 @@ async def extract_and_store(
     pg_episodic=None,
     relationship_store=None,
     graph_store: GraphStore | None = None,
-) -> int:
+) -> dict[str, int]:
+    """Returns {"triples_written", "episodes_processed", "extraction_failures"}.
+
+    Per-episode failures are skipped and retried next run (not fatal)."""
     own_store = pg_episodic is None
     if pg_episodic is None:
         pg_episodic = PgEpisodicStore()
@@ -63,13 +67,18 @@ async def extract_and_store(
 
         if not episodes:
             logger.info("No unextracted episodes to process")
-            return 0
+            return {
+                "triples_written": 0,
+                "episodes_processed": 0,
+                "extraction_failures": 0,
+            }
 
         graph = graph_store or GraphStore(relationship_store=relationship_store)
         if own_graph:
             graph.connect()
         try:
             triples_written = 0
+            extraction_failures = 0
             processed_ids: list[str] = []
             for ep in episodes:
                 raw = ep.get("raw_text") or ep.get("summary") or ""
@@ -83,6 +92,7 @@ async def extract_and_store(
                         "Skipping episode %s: extraction failed, will retry next run",
                         ep["id"],
                     )
+                    extraction_failures += 1
                     continue
                 for t in triples:
                     t = _normalize_triple(t)
@@ -108,8 +118,17 @@ async def extract_and_store(
                 processed_ids.append(ep["id"])
             if processed_ids:
                 await pg_episodic.mark_graph_extracted(processed_ids)
-            logger.info("Wrote %d triples from %d episodes", triples_written, len(episodes))
-            return triples_written
+            logger.info(
+                "Wrote %d triples from %d episodes (%d failed)",
+                triples_written,
+                len(episodes),
+                extraction_failures,
+            )
+            return {
+                "triples_written": triples_written,
+                "episodes_processed": len(processed_ids),
+                "extraction_failures": extraction_failures,
+            }
         finally:
             if own_graph:
                 graph.close()
@@ -162,51 +181,92 @@ def _normalize_entity(e: Any) -> dict[str, str] | None:
     return None
 
 
-async def _extract_litellm(text: str) -> list[dict[str, Any]]:
-    """Extract triples via the LiteLLM proxy (default remote backend)."""
+def _parse_triples_json(content: str) -> list[dict[str, Any]]:
+    """Parse triples from LLM output, preferring the last complete JSON array.
+
+    Reasoning models emit a draft array mid-chain-of-thought before the final
+    answer; first/last-bracket slicing splices the two together and fails with
+    Extra data. Instead, scan candidate '[' positions with raw_decode() and
+    keep the last valid list (dict-valued lists win over citation noise like
+    "[1]").
+    """
+    content = content.strip()
     try:
-        import os
+        parsed = json.loads(content)
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    last_match: list | None = None
+    idx = content.find("[")
+    while idx != -1:
+        try:
+            value, end = decoder.raw_decode(content, idx)
+        except json.JSONDecodeError:
+            idx = content.find("[", idx + 1)
+            continue
+        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+            last_match = value
+        idx = content.find("[", max(idx + 1, end))
+    if last_match is not None:
+        return last_match
+    logger.warning(
+        "LLM returned no parseable JSON array (%d chars); treating as no triples",
+        len(content),
+    )
+    return []
 
-        from xnch.config import settings as xnch_settings
 
-        api_key = os.environ.get("LITELLM_MASTER_KEY", "")
-        api_base = xnch_settings.litellm_proxy_url.rstrip("/")
-        model = xnch_settings.graph_extractor_model
-        if "/" not in model:
-            model = f"openai/{model}"
-        if len(text) > 6000:
-            text = text[:6000] + "\n...[truncated]"
-        resp = await litellm.acompletion(
-            model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an entity-relation extractor. Return valid JSON only.",
+async def _extract_litellm(text: str) -> list[dict[str, Any]]:
+    """Extract triples via the LiteLLM proxy's OpenAI-compatible endpoint.
+
+    The proxy's model ids are authoritative, so the configured id is sent
+    verbatim; the litellm SDK is bypassed because its client-side router
+    rejects bare ids (LLM Provider NOT provided).
+    """
+    import os
+
+    from xnch.config import settings as xnch_settings
+
+    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
+    api_base = xnch_settings.litellm_proxy_url.rstrip("/")
+    model = xnch_settings.graph_extractor_model
+    provider_hint = xnch_settings.graph_extractor_provider_hint
+    if provider_hint:
+        model = f"{provider_hint}/{model}"
+    if len(text) > 6000:
+        text = text[:6000] + "\n...[truncated]"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                f"{api_base}/v1/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are an entity-relation extractor. Return valid JSON only.",
+                        },
+                        {"role": "user", "content": _EXTRACTION_PROMPT.format(raw_text=text)},
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 4096,
                 },
-                {"role": "user", "content": _EXTRACTION_PROMPT.format(raw_text=text)},
-            ],
-            api_base=api_base,
-            api_key=api_key,
-            temperature=0.1,
-            max_tokens=4096,
-        )
+                headers=headers,
+            )
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"LiteLLM proxy returned {resp.status_code}: {resp.text[:200]}"
+            )
     except Exception:
         logger.exception("LiteLLM extraction failed for episode text")
         raise
-    content = resp.choices[0].message.content.strip()
+    content = resp.json()["choices"][0]["message"]["content"].strip()
     if content.startswith("```"):
         content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        first, last = content.find("["), content.rfind("]")
-        if first != -1 and last > first:
-            return json.loads(content[first : last + 1])
-        logger.warning(
-            "LLM returned no parseable JSON (%d chars); treating as no triples",
-            len(content),
-        )
-        return []
+    return _parse_triples_json(content)
 
 
 async def _extract_ollama(text: str) -> list[dict[str, Any]]:

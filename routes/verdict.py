@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from ..auth.token import ExecutionTokenClaims
 from ..observability.langfuse_client import trace_llm_call
+from ..observability.metrics import HITL_GATE_BYPASS
 
 router = APIRouter(tags=["verdict"])
 
@@ -114,6 +115,21 @@ async def verdict(body: VerdictRequest, request: Request) -> dict[str, Any]:
 
     app.event_log.emit(ctx.get("session_id", ""), "xnch.verdict", "VERDICT_ALLOW",
                        data={"audit_ref": audit_ref, "policy_refs": result.policy_refs})
+
+    # Security signal: an EXECUTION decision allowed with a goal_id in context
+    # was dispatched by the goal loop and never passed the HITL interrupt gate.
+    if ctx.get("goal_id") and action.get("intent_class", "") == "EXECUTION":
+        HITL_GATE_BYPASS.labels(origin="goal_loop").inc()
+        app.event_log.emit(
+            ctx.get("session_id", ""), "xnch.hitl", "HITL_GATE_BYPASS",
+            level="WARN",
+            data={
+                "goal_id": ctx.get("goal_id"),
+                "request_id": body.request_id,
+                "intent_class": action.get("intent_class", ""),
+                "action_type": action.get("type", ""),
+            },
+        )
 
     await trace_llm_call(
         prompt=json.dumps({"action": action, "actor": actor, "context": ctx}),

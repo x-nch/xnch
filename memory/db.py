@@ -3,6 +3,14 @@ from pathlib import Path
 
 import aiosqlite
 
+try:
+    from ..observability.metrics import timed_sqlite
+except ImportError:  # standalone/file-loaded contexts (workflow P2 tests)
+    def timed_sqlite(store: str):
+        def decorator(fn):
+            return fn
+        return decorator
+
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -247,6 +255,7 @@ async def init_db(db_path: Path) -> None:
         await db.commit()
 
 
+@timed_sqlite("system_state")
 async def get_state_version(db_path: Path) -> str:
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(
@@ -265,6 +274,7 @@ async def get_policy_version(db_path: Path) -> str:
     return row[0] if row else "v1.0"
 
 
+@timed_sqlite("system_state")
 async def increment_state_version(db_path: Path) -> str:
     async with aiosqlite.connect(db_path) as db:
         async with db.execute(

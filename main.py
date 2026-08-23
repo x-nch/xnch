@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from starlette.requests import Request
 import httpx
@@ -18,12 +19,13 @@ from .memory import SensoryBuffer, WorkingMemory, GraphStore, RelationshipStore
 from .memory.experience_store import ExperienceStore
 from .memory.goal_store import GoalStore
 from .memory.db import get_state_version, get_policy_version, increment_state_version
+from .observability import DeepHealthRunner, hitl_pending_snapshot, install_metrics_middleware, metrics_endpoint
 from .policy import PolicyLoader, PolicyEngine
 from .routes import (
     session_router, memory_router, policy_router,
     verdict_router, execution_router, governance_router, auth_router,
     nexi_gateway_router, chat_router, admin_router, voice_router, goal_router,
-    pipeline_router,
+    pipeline_router, observability_router,
 )
 from .routes import approvals_router, workflows_router, agents_router
 from xnch_mcp.http_router import router as mcp_router
@@ -74,6 +76,7 @@ async def lifespan(app: FastAPI):
     # Audit
     s.event_log = EventLog(settings.audit_dir / "events.jsonl")
     s.ledger = DecisionLedger(settings.audit_dir / "decisions.jsonl")
+    s.recent_alerts = deque(maxlen=settings.recent_alerts_capacity)
 
     # Policy
     _sync_policies(settings)
@@ -231,9 +234,27 @@ async def lifespan(app: FastAPI):
         logger.info("LangGraph pipeline ready (HITL mode=%s)", settings.hitl_execution_mode)
 
     s.event_log.emit("startup", "xnch", "SERVER_STARTED", data={"version": "0.1.0"})
+
+    deep_health = DeepHealthRunner(
+        redis_client=s.kv_cache.redis_client,
+        pg_pool=getattr(s.pg_episodic, "_pool", None),
+        graph_store=s.graph_store,
+        interval_s=settings.deep_health_interval_s,
+    )
+    if settings.metrics_enabled:
+        await deep_health.start()
+    s.deep_health = deep_health
+
+    from .observability.prom_summary import PrometheusClient
+
+    s.prom_client = PrometheusClient()
+
     logger.info("xnch-server started")
 
     yield
+
+    await deep_health.stop()
+    await s.prom_client.aclose()
 
     if s.mcp_bridge is not None:
         await s.mcp_bridge.stop()
@@ -254,6 +275,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="xnch", version="0.1.0", lifespan=lifespan)
 
+if settings.metrics_enabled:
+    install_metrics_middleware(app)
+    app.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
+
 app.include_router(session_router)
 app.include_router(memory_router)
 app.include_router(policy_router)
@@ -267,6 +292,7 @@ app.include_router(admin_router)
 app.include_router(voice_router)
 app.include_router(goal_router)
 app.include_router(pipeline_router)
+app.include_router(observability_router)
 app.include_router(workflows_router)
 app.include_router(agents_router)
 app.include_router(approvals_router)
@@ -309,6 +335,16 @@ async def _probe_vllm() -> tuple[bool, int | None]:
 async def llm_status() -> dict:
     available, latency_ms = await _probe_vllm()
     return {"available": available, "model": settings.llm_model_id, "latency_ms": latency_ms}
+
+
+@app.get("/system/memory-tier-health")
+async def memory_tier_health(request: Request) -> dict:
+    """Latest deep memory-tier probe results (Redis TTL canary / PG episodic / Kuzu round-trip)."""
+    runner: DeepHealthRunner | None = getattr(request.app.state, "deep_health", None)
+    if runner is None:
+        return {"enabled": False}
+    results = await runner.run_once()
+    return {"enabled": True, "tiers": DeepHealthRunner.to_summary(results), "hitl": hitl_pending_snapshot()}
 
 
 def _sync_policies(s) -> None:

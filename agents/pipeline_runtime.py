@@ -13,6 +13,7 @@ from uuid import uuid4
 from langgraph.types import Command
 
 from ..config import settings
+from ..observability.metrics import record_decision, record_interrupt_opened
 from .hitl import parse_resume_decision
 from .pipeline_graph import create_pipeline
 
@@ -104,6 +105,7 @@ class PipelineRuntime:
         )
         interrupts = _interrupt_payloads(result)
         if interrupts:
+            record_interrupt_opened(tid)
             return {
                 "status": "interrupted",
                 "thread_id": tid,
@@ -137,6 +139,7 @@ class PipelineRuntime:
             else approved_bool
         )
         result = await graph.ainvoke(Command(resume=resume_payload), config)
+        record_decision(thread_id, "approve" if approved_bool else "reject")
         interrupts = _interrupt_payloads(result)
         if interrupts:
             return {

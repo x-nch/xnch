@@ -18,28 +18,38 @@ async def run_consolidation(
     pg_episodic=None,
     relationship_store=None,
     graph_store=None,
-) -> None:
+) -> dict[str, int]:
+    """Returns {"triples_written", "episodes_processed", "extraction_failures", "archived"}."""
+    result: dict[str, int] = {
+        "triples_written": 0,
+        "episodes_processed": 0,
+        "extraction_failures": 0,
+        "archived": 0,
+    }
+    own_store = pg_episodic is None
+    if pg_episodic is None:
+        pg_episodic = PgEpisodicStore()
+        await pg_episodic.connect()
     try:
-        own_store = pg_episodic is None
-        if pg_episodic is None:
-            pg_episodic = PgEpisodicStore()
-            await pg_episodic.connect()
-        try:
-            triples = await extract_and_store(
-                pg_episodic=pg_episodic,
-                relationship_store=relationship_store,
-                graph_store=graph_store,
-            )
-            logger.info("Graph extraction: %d triples written", triples)
+        counts = await extract_and_store(
+            pg_episodic=pg_episodic,
+            relationship_store=relationship_store,
+            graph_store=graph_store,
+        )
+        result.update(counts)
+        logger.info(
+            "Graph extraction: %d triples written (%d failures)",
+            result["triples_written"],
+            result["extraction_failures"],
+        )
 
-            episodes = await pg_episodic.fetch_episodes_for_decay(limit=5000)
-            archived = await _recompute_and_archive_decay(pg_episodic, episodes)
-            logger.info("Consolidation complete — %d episodes archived", archived)
-        finally:
-            if own_store:
-                await pg_episodic.close()
-    except Exception:
-        logger.exception("Consolidation failed")
+        episodes = await pg_episodic.fetch_episodes_for_decay(limit=5000)
+        result["archived"] = await _recompute_and_archive_decay(pg_episodic, episodes)
+        logger.info("Consolidation complete — %d episodes archived", result["archived"])
+    finally:
+        if own_store:
+            await pg_episodic.close()
+    return result
 
 
 async def _recompute_and_archive_decay(
