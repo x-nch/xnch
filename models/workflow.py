@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 WorkflowTriggerKind = Literal["manual", "schedule"]
 ApprovalStatus = Literal[
@@ -50,6 +50,15 @@ class WorkflowStepDef(BaseModel):
     requires_approval: bool = True
     description: str | None = None
 
+    @model_validator(mode="after")
+    def _enforce_elevated_gating(self) -> WorkflowStepDef:
+        """Client never decides gating for elevated kinds (exec_tool,
+        send_email). The flag is forced True at the API boundary so a
+        browser-proposed workflow cannot route around HITL."""
+        if self.kind in ELEVATED_KINDS:
+            self.requires_approval = True
+        return self
+
 
 class WorkflowCreateRequest(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=200)]
@@ -82,6 +91,12 @@ class RunStep(BaseModel):
     retry_count: int = 0
     max_retries: int = 3
     next_retry_at: float | None = None
+
+    @model_validator(mode="after")
+    def _enforce_elevated_gating(self) -> RunStep:
+        if self.kind in ELEVATED_KINDS:
+            self.requires_approval = True
+        return self
 
 
 class ApprovalDecideRequest(BaseModel):

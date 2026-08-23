@@ -80,22 +80,38 @@ async def test_update_and_list_and_delete(tmp_path):
     assert await store.delete_workflow(wf_id) is False
 
 
-async def test_run_creates_approvals_only_for_gated_steps(tmp_path):
+async def test_run_gating_enforced_including_elevated_kinds(tmp_path):
+    """Elevated kinds are gated even when the stored flag says otherwise."""
     store, wf_id = await _make_store(tmp_path)
     run, created = await store.create_run(workflow_id=wf_id, actor="operator")
     assert created and run["status"] == "RUNNING"
     steps = json.loads(run["steps_json"])
-    assert [s["status"] for s in steps] == [
-        "DONE",  # non-gated auto-done in v1
-        "AWAITING_APPROVAL",
-        "AWAITING_APPROVAL",
-    ]
+    # s1 exec_tool was stored with requires_approval=False but is force-gated
+    assert [s["status"] for s in steps] == ["AWAITING_APPROVAL"] * 3
+    assert all(s["requires_approval"] for s in steps)
     approvals = await store.list_approvals(status="pending")
-    assert len(approvals) == 2
+    assert len(approvals) == 3
     kinds = {json.loads(a["payload_json"])["kind"] for a in approvals}
-    assert kinds == {"write_file", "send_email"}
+    assert kinds == {"exec_tool", "write_file", "send_email"}
     risks = {a["risk_class"] for a in approvals}
-    assert risks == {"low", "elevated"}  # send_email elevated, write_file low
+    assert risks == {"low", "elevated"}  # write_file low; exec_tool/send_email elevated
+
+
+async def test_non_elevated_kind_can_stay_ungated(tmp_path):
+    """write_file with an explicit False flag remains ungated."""
+    db_path = tmp_path / "ungated.db"
+    await init_db(db_path)
+    store = WorkflowStore(db_path)
+    wf_id = await store.create_workflow(
+        owner_actor_id="op", name="Local draft", description=None,
+        trigger={"kind": "manual"},
+        steps=[{"id": "w", "kind": "write_file", "summary": "scratch",
+                "requires_approval": False}],
+    )
+    run, _ = await store.create_run(workflow_id=wf_id, actor="op")
+    steps = json.loads(run["steps_json"])
+    assert steps[0]["status"] == "DONE"
+    assert await store.list_approvals(status="pending") == []
 
 
 async def test_approve_all_completes_run(tmp_path):
@@ -130,7 +146,7 @@ async def test_idempotent_run_replays_existing(tmp_path):
     r1, c1 = await store.create_run(workflow_id=wf_id, actor="op", idempotency_key="k1")
     r2, c2 = await store.create_run(workflow_id=wf_id, actor="op", idempotency_key="k1")
     assert c1 and not c2 and r1["id"] == r2["id"]
-    assert len(await store.list_approvals(status="pending")) == 2
+    assert len(await store.list_approvals(status="pending")) == 3
 
 
 async def test_idempotent_decide_returns_same_row(tmp_path):
@@ -188,7 +204,7 @@ async def test_cancel_remaining_approvals_for_run(tmp_path):
     store, wf_id = await _make_store(tmp_path)
     run, _ = await store.create_run(workflow_id=wf_id, actor="op")
     cancelled = await store.cancel_approvals_for_run(run["id"], actor="admin")
-    assert cancelled == 2
+    assert cancelled == 3
     statuses = {a["status"] for a in await store.list_approvals(status=None)}
     assert "CANCELLED" in statuses
 

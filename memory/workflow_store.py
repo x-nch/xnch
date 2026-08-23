@@ -171,12 +171,18 @@ class WorkflowStore:
         approvals: list[tuple[Any, ...]] = []
         for i, sd in enumerate(step_defs):
             step_uuid = str(uuid4())
-            gated = bool(sd.get("requires_approval", True))
+            kind = sd.get("kind", "other")
+            # Defense in depth: elevated kinds are gated regardless of the
+            # stored flag (covers legacy rows written before model-level
+            # enforcement). The client is never the gating authority.
+            gated = bool(sd.get("requires_approval", True)) or (
+                kind in ELEVATED_KINDS
+            )
             status = "AWAITING_APPROVAL" if gated else "DONE"
             approval_id: str | None = None
             if gated:
                 approval_id = str(uuid4())
-                risk = "elevated" if sd.get("kind") in ELEVATED_KINDS else "low"
+                risk = "elevated" if kind in ELEVATED_KINDS else "low"
                 payload = {
                     "run_id": run_id,
                     "workflow_id": workflow_id,
@@ -752,6 +758,14 @@ class WorkflowStore:
                 " payload_json, status, risk_class, created_at)"
                 " VALUES (?, 'goal_step', ?, ?, 'AWAITING_APPROVAL', 'low', ?)",
                 (approval_id, goal_id, json.dumps(payload), now),
+            )
+            # Symmetric audit: goal_step births are recorded just like
+            # workflow steps' RUN_CREATED, so execution history is durable
+            # before any decision exists.
+            await db.execute(
+                "INSERT INTO step_events (step_uuid, event_type, actor, ts,"
+                " snapshot_json) VALUES (?, 'CREATED', 'system', ?, ?)",
+                (goal_id, now, json.dumps(payload)),
             )
             await db.commit()
         row = await self.get_approval(approval_id)
