@@ -31,18 +31,32 @@ XNCH_ROOT = Path(__file__).resolve().parent.parent
 def _load_governance():
     """Import xnch.routes.governance without executing routes/__init__.py —
     the full router bundle pulls voice/chat (litellm et al.) that these tests
-    never touch. Mirrors the controlled-loading style of test_agent_routes."""
+    never touch. Mirrors the controlled-loading style of test_agent_routes.
+
+    Any sys.modules entries this creates are removed again afterwards:
+    leaving a synthetic `xnch` / `xnch.routes` behind poisons later test
+    modules that do a plain `from xnch.main import app` (they would resolve
+    against the bare shim and fail collection).
+    """
     root = str(XNCH_ROOT)
     if root not in sys.path:
         sys.path.insert(0, root)
-    if "xnch" not in sys.modules:
-        pkg = types.ModuleType("xnch")
-        pkg.__path__ = [root]
-        sys.modules["xnch"] = pkg
-    routes_pkg = types.ModuleType("xnch.routes")
-    routes_pkg.__path__ = [str(XNCH_ROOT / "routes")]
-    sys.modules["xnch.routes"] = routes_pkg
-    return importlib.import_module("xnch.routes.governance")
+    before = set(sys.modules)
+    created = []
+    for name, path in (("xnch", root), ("xnch.routes", str(XNCH_ROOT / "routes"))):
+        if name not in sys.modules:
+            pkg = types.ModuleType(name)
+            pkg.__path__ = [path]
+            sys.modules[name] = pkg
+            created.append(name)
+    try:
+        return importlib.import_module("xnch.routes.governance")
+    finally:
+        for name in list(sys.modules):
+            if name.startswith("xnch") and name not in before:
+                del sys.modules[name]
+        for name in created:
+            sys.modules.pop(name, None)
 
 
 governance = _load_governance()
