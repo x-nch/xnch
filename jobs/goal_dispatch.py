@@ -15,6 +15,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Plan entries declaring these kinds are always filed as risk_class='elevated'
+# (2026-08-24 audit F6 addendum) — keyword allowlists cannot down-grade an
+# explicitly external/consequential action.
+ELEVATED_KINDS = frozenset(
+    {
+        "send_email", "submit_application", "purchase", "publish",
+        "exec", "external_action", "delete",
+    }
+)
+
 
 def _plan_of(goal: dict[str, Any]) -> list[Any]:
     """simulation_plan arrives as list (route-serialized) or JSON string (store row)."""
@@ -98,6 +108,13 @@ async def run_due_dispatch(
         )
         if not matched:
             risk_class = "elevated"
+    # Explicit plan-entry signals force elevation regardless of keyword match
+    # (2026-08-24 audit F6 addendum): a step that declares itself an external
+    # action — or carries risk="elevated" — is never filed as low-risk.
+    entry_kind = str(entry_plan.get("kind") or "").strip().lower()
+    entry_risk = str(entry_plan.get("risk") or "").strip().lower()
+    if entry_risk == "elevated" or entry_kind in ELEVATED_KINDS:
+        risk_class = "elevated"
     approval = await workflow_store.create_goal_approval(
         goal_id=goal_id,
         payload={

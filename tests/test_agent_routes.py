@@ -44,8 +44,15 @@ def _token_header() -> dict[str, str]:
     return {"X-Gateway-Token": mint_gateway_token(SECRET)}
 
 
-def _build_app(store: AgentRunStore, secret: str = SECRET) -> TestClient:
+def _build_app(
+    store: AgentRunStore,
+    secret: str = SECRET,
+    direct_dispatch_enabled: bool = True,
+) -> TestClient:
     routes = _load(f"xnch_agents_routes_{id(store)}", "routes/agents.py")
+    from xnch.config import settings
+
+    settings.agents_direct_dispatch_enabled = direct_dispatch_enabled
     app = FastAPI()
     app.state.agent_run_store = store
     app.state.gateway_secret = secret
@@ -141,3 +148,42 @@ def test_list_runs_open_read(client) -> None:
 
     filtered = tc.get("/agents/runs?status=RUNNING")
     assert filtered.json() == []
+
+
+# ---------------------------------------------------------------------------
+# F7 (2026-08-24): direct-dispatch kill-switch. The bare write path bypasses
+# the goal-approval HITL gate, so it is deny-by-default; enabling is an
+# explicit operator decision via XNCH_AGENTS_DIRECT_DISPATCH_ENABLED.
+# ---------------------------------------------------------------------------
+
+async def test_direct_dispatch_disabled_by_default(tmp_path: Path) -> None:
+    """Fresh settings (flag unset) -> 403 and nothing queued."""
+    db = tmp_path / "xnch.db"
+    await init_db(db)
+    tc = _build_app(AgentRunStore(db), direct_dispatch_enabled=False)
+    r = tc.post(
+        "/agents/dispatch",
+        json={"prompt": "arbitrary prompt"},
+        headers=_token_header(),
+    )
+    assert r.status_code == 403
+    assert "approval" in r.json()["detail"].lower()
+    assert await store_count(AgentRunStore, db) == 0
+
+
+async def test_direct_dispatch_enabled_allows_queueing(tmp_path: Path) -> None:
+    """Operator explicitly enables the flag -> prior behavior restored."""
+    db = tmp_path / "xnch.db"
+    await init_db(db)
+    tc = _build_app(AgentRunStore(db), direct_dispatch_enabled=True)
+    r = tc.post(
+        "/agents/dispatch",
+        json={"prompt": "manual task"},
+        headers=_token_header(),
+    )
+    assert r.status_code == 201
+    assert r.json()["status"] == "QUEUED"
+
+
+async def store_count(store_cls, db: Path) -> int:
+    return len(await store_cls(db).list_runs())

@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from xnch.config import settings
 from xnch.models.agent import (
     AgentClaimRequest,
     AgentDispatchRequest,
@@ -32,6 +33,19 @@ async def dispatch_agent_task(
     body: AgentDispatchRequest,
     request: Request,
 ) -> dict[str, Any]:
+    if not settings.agents_direct_dispatch_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "direct dispatch is disabled: queue goal steps through the "
+                "approval flow, or set XNCH_AGENTS_DIRECT_DISPATCH_ENABLED=1"
+            ),
+        )
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "direct dispatch queued (approval-bypass path, explicitly enabled)"
+    )
     return await _get_store(request).create_run(prompt=body.prompt, workspace=body.workspace)
 
 
