@@ -99,6 +99,9 @@ def test_full_operator_journey_reject_path(env):
     assert r.status_code == 201, r.text
     wf = r.json()
     assert wf["name"] == "Weekly Digest" and len(wf["steps"]) == 3
+    # Server re-derives gating: send_email sent with requires_approval=False
+    # must be normalized to True at the API boundary.
+    assert wf["steps"][2]["requires_approval"] is True
 
     # 2. list + get
     assert any(w["id"] == wf["id"] for w in c.get("/workflows").json())
@@ -112,10 +115,10 @@ def test_full_operator_journey_reject_path(env):
     assert r1.json()["id"] == r2.json()["id"]
     run_id = r1.json()["id"]
 
-    # 4. unified queue — exactly 2 pending (non-gated step auto-done)
+    # 4. unified queue — exactly 3 pending (send_email force-gated server-side)
     queue = c.get("/approvals?status=pending").json()
-    assert len(queue) == 2
-    assert {a["payload"]["kind"] for a in queue} == {"exec_tool", "write_file"}
+    assert len(queue) == 3
+    assert {a["payload"]["kind"] for a in queue} == {"exec_tool", "write_file", "send_email"}
     assert all(a["producer_type"] == "workflow_step" for a in queue)
 
     # 5. reject one → run FAILED; approve other; re-decide → 409
@@ -129,10 +132,11 @@ def test_full_operator_journey_reject_path(env):
     assert body["status"] == "REJECTED" and body["decided_by"] == "operator-7"
 
     remaining = c.get("/approvals?status=pending").json()
-    assert len(remaining) == 1
-    assert c.post(
-        f"/approvals/{remaining[0]['id']}/decide", json={"decision": "approve"}
-    ).status_code == 200
+    assert len(remaining) == 2
+    for approval in remaining:
+        assert c.post(
+            f"/approvals/{approval['id']}/decide", json={"decision": "approve"}
+        ).status_code == 200
 
     replay = c.post(f"/approvals/{queue[0]['id']}/decide", json={"decision": "approve"})
     assert replay.status_code == 409
