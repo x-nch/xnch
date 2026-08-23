@@ -25,7 +25,7 @@ from .routes import (
     nexi_gateway_router, chat_router, admin_router, voice_router, goal_router,
     pipeline_router,
 )
-from .routes import approvals_router, workflows_router
+from .routes import approvals_router, workflows_router, agents_router
 from xnch_mcp.http_router import router as mcp_router
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,11 @@ async def lifespan(app: FastAPI):
         settings.db_path,
         executor_enabled=settings.workflow_executor_enabled,
     )
+
+    # Agent dispatch queue (spec: docs/superpowers/specs/2026-08-23-agent-dispatch-design.md)
+    from .memory.agent_run_store import AgentRunStore
+
+    s.agent_run_store = AgentRunStore(settings.db_path)
     s.gateway_secret = settings.gateway_secret
     s.kv_cache = KVCache(settings.redis_url)
 
@@ -247,6 +252,7 @@ app.include_router(voice_router)
 app.include_router(goal_router)
 app.include_router(pipeline_router)
 app.include_router(workflows_router)
+app.include_router(agents_router)
 app.include_router(approvals_router)
 app.include_router(mcp_router)
 

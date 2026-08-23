@@ -23,9 +23,11 @@ class AgentRunStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
 
-    async def create_run(self, *, prompt: str, workspace: str) -> dict[str, Any]:
+    async def create_run(self, *, prompt: str, workspace: str | None = None) -> dict[str, Any]:
         run_id = str(uuid4())
         now = _now()
+        if workspace is None:
+            workspace = f"~/xnch-agents/{run_id}"
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 "INSERT INTO agent_runs (id, status, prompt, workspace,"
