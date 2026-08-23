@@ -100,7 +100,7 @@ class WeightEvolver:
     async def _default_fetch(self) -> list[dict[str, Any]]:
         from datetime import datetime, timedelta, timezone
 
-        from ..memory.pg_episodic_store import PgEpisodicStore
+        from ...memory.pg_episodic_store import PgEpisodicStore
 
         store = PgEpisodicStore()
         await store.connect()
@@ -113,7 +113,7 @@ class WeightEvolver:
     async def _default_current_weights(self, intent_class: str) -> dict[str, Any]:
         import aiosqlite
 
-        from ..config import settings
+        from ...config import settings
 
         async with aiosqlite.connect(settings.base_dir / "xnch.db") as db:
             db.row_factory = aiosqlite.Row
@@ -130,7 +130,8 @@ class WeightEvolver:
     async def _default_propose(self, intent_class: str, weights: dict, episode_batch: str) -> str:
         import httpx
 
-        from ..config import settings
+        from ...security.gateway_token import mint_gateway_token
+        from ...config import settings
 
         payload = {
             "intent_class": intent_class,
@@ -138,11 +139,16 @@ class WeightEvolver:
             "episode_batch": episode_batch,
             "proposed_by": "weight_evolver",
         }
+        headers = {"Content-Type": "application/json"}
+        if settings.gateway_secret:
+            headers["X-Gateway-Token"] = mint_gateway_token(settings.gateway_secret)
         try:
             async with httpx.AsyncClient(
                 base_url=settings.self_base_url, timeout=10.0
             ) as client:
-                resp = await client.post("/governance/weights/propose", json=payload)
+                resp = await client.post(
+                    "/governance/weights/propose", json=payload, headers=headers
+                )
                 resp.raise_for_status()
                 return resp.json().get("version", "")
         except Exception as exc:
