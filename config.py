@@ -131,6 +131,15 @@ class Settings(BaseSettings):
     hitl_execution_mode: str = "always"
     hitl_risk_threshold: float = 0.5
 
+    # Gateway token (Hybrid-B): shared HMAC secret with the web proxy.
+    # Empty ⇒ /workflows + /approvals write-gate is open (dev/test only).
+    gateway_secret: str = ""
+
+    # Workflow executor (P2): when True, approving a step leaves it APPROVED
+    # for nexi to claim+execute; False keeps v1 approve⇒DONE semantics.
+    workflow_executor_enabled: bool = False
+    workflow_step_claim_lease_s: int = 120
+
     # Voice (STT + TTS on gate7 CPU)
     voice_enabled: bool = True
     voice_stt_model: str = "base"
