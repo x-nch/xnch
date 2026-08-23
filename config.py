@@ -89,6 +89,7 @@ class Settings(BaseSettings):
     # Graph extractor (remote via LiteLLM proxy by default; opt into the
     # in-process llama.cpp backend with XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>)
     graph_extractor_model: str = "ornith"
+    graph_extractor_provider_hint: str = ""
 
     # Perception
     vault_dir: Path = Path("~/.xnch/vault").expanduser()

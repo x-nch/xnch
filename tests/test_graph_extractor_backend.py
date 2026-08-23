@@ -70,61 +70,90 @@ class TestExtractionPrompt:
         assert "}}" not in formatted
 
 
+class _FakeResp:
+    status_code = 200
+    text = ""
+
+    def __init__(self, content: str):
+        self._content = content
+
+    def json(self):
+        return {"choices": [{"message": {"content": self._content}}]}
+
+
+class _FakeProxyClient:
+    url = ""
+    payload = {}
+    headers = {}
+
+    def __init__(self, content: str = "[]", status_code: int = 200):
+        self._content = content
+        self.status_code = status_code
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def post(self, url, json=None, headers=None):
+        type(self).url = url
+        type(self).payload = json or {}
+        type(self).headers = headers or {}
+        resp = _FakeResp(self._content)
+        resp.status_code = self.status_code
+        return resp
+
+
+def _proxy(monkeypatch, content="[]", status_code=200, model="ornith", hint="", key="sk-test"):
+    monkeypatch.setenv("LITELLM_MASTER_KEY", key)
+    monkeypatch.setattr(gmod.httpx, "AsyncClient", lambda **kw: _FakeProxyClient(content, status_code))
+    monkeypatch.setattr("xnch.config.settings.graph_extractor_model", model)
+    monkeypatch.setattr("xnch.config.settings.graph_extractor_provider_hint", hint)
+    monkeypatch.setattr("xnch.config.settings.litellm_proxy_url", "http://localhost:4000")
+
+
 class TestLiteLLMProxyModel:
-    """Bare model names get an openai/ prefix when routed via the proxy."""
+    """Extraction posts straight to the proxy REST endpoint with the id verbatim."""
 
-    async def test_does_not_prefix_provider_qualified_model(self):
-        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
-             patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ollama/phi3:mini"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
-            mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
+    async def test_posts_to_openai_compatible_endpoint_with_verbatim_model(self, monkeypatch):
+        _proxy(monkeypatch, model="ornith")
+        assert await gmod._extract_litellm("text") == []
+        assert _FakeProxyClient.url.endswith("/v1/chat/completions")
+        assert _FakeProxyClient.payload["model"] == "ornith"
+
+    async def test_sends_master_key_as_bearer_header(self, monkeypatch):
+        _proxy(monkeypatch, key="sk-master")
+        await gmod._extract_litellm("text")
+        assert _FakeProxyClient.headers["Authorization"] == "Bearer sk-master"
+
+    async def test_provider_hint_opt_in_prefixes_model(self, monkeypatch):
+        _proxy(monkeypatch, model="ornith", hint="openai")
+        await gmod._extract_litellm("text")
+        assert _FakeProxyClient.payload["model"] == "openai/ornith"
+
+    async def test_truncates_long_episode(self, monkeypatch):
+        _proxy(monkeypatch)
+        sent = await gmod._extract_litellm("x" * 12000)
+        user_msg = _FakeProxyClient.payload["messages"][1]["content"]
+        assert len(user_msg) < 6500
+        assert "[truncated]" in user_msg
+
+    async def test_recovers_json_array_from_prose(self, monkeypatch):
+        content = 'Here is the result:\n[{"subject": {"id": "a", "name": "A", "type": "svc"}, "relation": "uses", "object": {"id": "b", "name": "B", "type": "svc"}}]\nDone!'
+        _proxy(monkeypatch, content=content)
+        result = await gmod._extract_litellm("text")
+        assert len(result) == 1
+        assert result[0]["relation"] == "uses"
+
+    async def test_unparseable_content_treated_as_no_triples(self, monkeypatch):
+        _proxy(monkeypatch, content="I'm sorry, I cannot extract triples from this text.")
+        assert await gmod._extract_litellm("text") == []
+
+    async def test_http_error_raises_for_skip_retry(self, monkeypatch):
+        _proxy(monkeypatch, status_code=400)
+        with pytest.raises(RuntimeError, match="400"):
             await gmod._extract_litellm("text")
-            assert mock.await_args.kwargs["model"] == "ollama/phi3:mini"
-
-    async def test_prefixes_bare_model_with_openai(self):
-        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
-             patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
-            mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
-            await gmod._extract_litellm("text")
-            assert mock.await_args.kwargs["model"] == "openai/ornith"
-
-    async def test_truncates_long_episode(self):
-        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
-             patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
-            mock.return_value.choices = [MagicMock(message=MagicMock(content="[]"))]
-            await gmod._extract_litellm("x" * 12000)
-            sent = mock.await_args.kwargs["messages"][1]["content"]
-            assert len(sent) < 6500
-            assert "[truncated]" in sent
-
-    async def test_recovers_json_array_from_prose(self):
-        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
-             patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
-            mock.return_value.choices = [MagicMock(message=MagicMock(
-                content='Here is the result:\n[{"subject": {"id": "a", "name": "A", "type": "svc"}, "relation": "uses", "object": {"id": "b", "name": "B", "type": "svc"}}]\nDone!'
-            ))]
-            result = await gmod._extract_litellm("text")
-            assert len(result) == 1
-            assert result[0]["relation"] == "uses"
-
-    async def test_unparseable_content_treated_as_no_triples(self):
-        """If the LLM replies with non-JSON prose, treat it as zero triples
-        (mark the episode done) rather than re-raising and retrying forever."""
-        with patch("xnch.memory.graph_extractor.litellm.acompletion", new_callable=AsyncMock) as mock, \
-             patch("xnch.config.settings") as mock_settings:
-            mock_settings.graph_extractor_model = "ornith"
-            mock_settings.litellm_proxy_url = "http://localhost:4000"
-            mock.return_value.choices = [MagicMock(message=MagicMock(
-                content="I'm sorry, I cannot extract triples from this text."
-            ))]
-            assert await gmod._extract_litellm("text") == []
 
 
 class TestUseLlamaCpp:
@@ -186,3 +215,54 @@ class TestNormalizeTriple:
     def test_returns_none_for_empty_entity(self):
         t = {"subject": "", "relation": "r", "object": {"id": "b", "name": "B", "type": "svc"}}
         assert gmod._normalize_triple(t) is None
+
+
+class TestParseTriplesJson:
+    """Robust extraction: reasoning models emit draft arrays before the final one."""
+
+    ARR = '[{"subject": {"id": "a", "name": "A", "type": "svc"}, "relation": "uses", "object": {"id": "b", "name": "B", "type": "svc"}}]'
+    DRAFT = '[{"subject": {"id": "x", "name": "X", "type": "?"}, "relation": "maybe", "object": {"id": "y", "name": "Y", "type": "?"}}]'
+
+    def _cot(self) -> str:
+        return (
+            "Here's a thinking process:\n"
+            f"draft: {self.DRAFT}\n"
+            "hmm, relation should be uses not maybe...\n"
+            f"Final answer:\n{self.ARR}\n"
+            "This extracts the service dependency."
+        )
+
+    def test_cot_draft_then_final_array_wins(self):
+        result = gmod._parse_triples_json(self._cot())
+        assert len(result) == 1
+        assert result[0]["relation"] == "uses"
+
+    def test_single_array_in_prose(self):
+        result = gmod._parse_triples_json(f"Sure:\n{self.ARR}")
+        assert result[0]["relation"] == "uses"
+
+    def test_plain_array_passthrough(self):
+        assert gmod._parse_triples_json(self.ARR)[0]["relation"] == "uses"
+
+    def test_object_wrapper_not_returned_as_triples(self):
+        assert gmod._parse_triples_json('{"triples": [1,2]}') == []
+
+    def test_no_arrays_returns_empty(self):
+        assert gmod._parse_triples_json("I cannot help with that.") == []
+
+    def test_citation_noise_does_not_beat_real_array(self):
+        result = gmod._parse_triples_json(f"{self.ARR}\nSee refs [1] and [2] for details.")
+        assert len(result) == 1
+        assert result[0]["relation"] == "uses"
+
+    def test_extra_data_case_from_live_failure(self):
+        content = (
+            "Here's a thinking process:\n"
+            f"{self.DRAFT}\n"
+            f"{self.ARR}\n"
+            "trailing prose"
+        )
+        result = gmod._parse_triples_json(content)
+        assert result[0]["relation"] == "uses"
+
+
