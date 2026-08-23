@@ -20,6 +20,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "asyncpg>=0.31.0",
     "kuzu>=0.11.3",
+    "prometheus-client>=0.21",
     "pluggy>=1.6.0",
     "litellm>=1.89.4",
     "llama-cpp-python>=0.2.90",

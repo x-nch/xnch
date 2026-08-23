@@ -1,4 +1,5 @@
 from pathlib import Path
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,6 +79,20 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
+    # Prometheus instrumentation
+    metrics_enabled: bool = True
+    metrics_allow_cidrs: list[str] = Field(default_factory=lambda: ["127.0.0.1", "::1", "192.168.50.0/24"])
+    deep_health_interval_s: float = 30.0
+
+    # Alertmanager webhook receiver (POST /admin/alerts). Includes the docker
+    # bridge range so the alertmanager container can reach host-gateway.
+    alert_webhook_allow_cidrs: list[str] = Field(
+        default_factory=lambda: [
+            "127.0.0.1", "::1", "192.168.50.0/24", "172.16.0.0/12",
+        ]
+    )
+    recent_alerts_capacity: int = 200
+
     # LiteLLM proxy
     litellm_proxy_url: str = "http://litellm:4000"
 
@@ -85,6 +100,10 @@ class Settings(BaseSettings):
     llm_status_url: str = "http://192.168.50.2:8082/health"
     llm_model_id: str = "ornith-1.0-35b"
     llm_probe_timeout_s: float = 3.0
+
+    # Prometheus (operator UI summarizer; runs co-located on Node A)
+    prometheus_url: str = "http://127.0.0.1:9090"
+    prometheus_timeout_s: float = 4.0
 
     # Graph extractor (remote via LiteLLM proxy by default; opt into the
     # in-process llama.cpp backend with XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>)
