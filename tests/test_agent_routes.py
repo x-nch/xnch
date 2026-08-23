@@ -115,11 +115,18 @@ def test_outcome_happy_404_and_409(client) -> None:
 
     ok = tc.post(
         f"/agents/runs/{run_id}/outcome",
-        json={"outcome_status": "DONE", "exit_code": 0},
+        json={"outcome_status": "DONE", "exit_code": 0, "result_text": "the answer"},
         headers=h,
     )
     assert ok.status_code == 200
     assert ok.json()["status"] == "DONE"
+
+    detail = tc.get(f"/agents/runs/{run_id}")
+    assert detail.status_code == 200
+    assert detail.json()["result_text"] == "the answer"
+
+    missing_detail = tc.get("/agents/runs/nope")
+    assert missing_detail.status_code == 404
 
     missing = tc.post("/agents/runs/nope/outcome", json={"outcome_status": "DONE"}, headers=h)
     assert missing.status_code == 404

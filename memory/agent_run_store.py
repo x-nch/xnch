@@ -76,6 +76,7 @@ class AgentRunStore:
         exit_code: int | None = None,
         output_path: str | None = None,
         error: str | None = None,
+        result_text: str | None = None,
     ) -> dict[str, Any] | None:
         if outcome_status not in ("DONE", "FAILED"):
             raise ValueError(f"invalid outcome_status: {outcome_status!r}")
@@ -89,8 +90,10 @@ class AgentRunStore:
                 return None
             await db.execute(
                 "UPDATE agent_runs SET status = ?, exit_code = ?, output_path = ?,"
-                " error = ?, lease_expires_at = NULL, updated_at = ? WHERE id = ?",
-                (outcome_status, exit_code, output_path, error, _now(), run_id),
+                " error = ?, result_text = ?, lease_expires_at = NULL,"
+                " updated_at = ? WHERE id = ?",
+                (outcome_status, exit_code, output_path, error, result_text,
+                 _now(), run_id),
             )
             await db.commit()
         return await self.get_run(run_id)

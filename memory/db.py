@@ -206,6 +206,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     output_path      TEXT,
     error            TEXT,
     approval_id      TEXT,
+    result_text      TEXT,
     created_at       REAL NOT NULL DEFAULT (unixepoch()),
     updated_at       REAL NOT NULL DEFAULT (unixepoch())
 );
@@ -241,6 +242,8 @@ async def init_db(db_path: Path) -> None:
         cols = {row[1] for row in await cur.fetchall()}
         if "approval_id" not in cols:
             await db.execute("ALTER TABLE agent_runs ADD COLUMN approval_id TEXT")
+        if "result_text" not in cols:
+            await db.execute("ALTER TABLE agent_runs ADD COLUMN result_text TEXT")
         await db.commit()
 
 

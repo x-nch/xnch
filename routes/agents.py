@@ -57,6 +57,7 @@ async def agent_run_outcome(
         exit_code=body.exit_code,
         output_path=body.output_path,
         error=body.error,
+        result_text=(body.result_text or "")[-40000:] or None,
     )
     if row is None:
         existing = await store.get_run(run_id)
@@ -81,6 +82,14 @@ async def agent_run_outcome(
         logging.getLogger(__name__).exception(
             "goal step-outcome back-pressure failed for run %s", run_id
         )
+    return row
+
+
+@router.get("/runs/{run_id}")
+async def get_agent_run(run_id: str, request: Request) -> dict[str, Any]:
+    row = await _get_store(request).get_run(run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="agent run not found")
     return row
 
 

@@ -21,3 +21,4 @@ class AgentOutcomeRequest(BaseModel):
     exit_code: int | None = None
     output_path: str | None = None
     error: str | None = None
+    result_text: str | None = None
