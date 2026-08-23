@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     goal_dispatch_enabled: bool = False
     goal_dispatch_cron_minute: int = 30
     goal_dispatch_goal_id: str = "2c821d69-c7c3-42ff-96cb-d1aaddc245b0"
+
+    # Direct agent dispatch (POST /agents/dispatch) bypasses the approval
+    # gate, so it is deny-by-default (2026-08-24 audit F7). Enable only if
+    # the muse-style manual dispatch path is wanted.
+    agents_direct_dispatch_enabled: bool = False
     # Comma-separated keywords matched against plan-entry "action" text.
     # Empty = unrestricted. Non-matching actions still file an approval,
     # but with risk_class='elevated' instead of 'low'.

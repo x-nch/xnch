@@ -370,3 +370,43 @@ async def test_retry_sweep_spawns_missing_run_once(env) -> None:
     again = await sweep_fn(workflow_store=env["wf"], agent_run_store=env["agents"])
     assert again["spawned"] == 0
     assert len(await env["agents"].list_runs()) == 1
+
+
+# ---------------------------------------------------------------------------
+# F6 addendum (2026-08-24): explicit plan-entry signals force elevation even
+# when the action text matches the configured keyword allowlist.
+# ---------------------------------------------------------------------------
+
+async def test_explicit_elevated_kind_forces_elevation(env) -> None:
+    await env["goals"].create_goal(
+        owner_actor_id="ck-san", objective="t", max_steps=2,
+        simulation_plan=[
+            # action matches a would-be allowlist token, but the entry
+            # declares itself an external action:
+            {"kind": "send_email", "day": 1,
+             "action": "research recipients then email them"},
+        ],
+    )
+    goal = (await env["goals"].list_goals())[-1]
+    out = await run_due_dispatch(
+        goal_store=env["goals"], workflow_store=env["wf"],
+        agent_run_store=env["agents"], goal_id=goal["goal_id"],
+        allowed_action_keywords=["research"],
+    )
+    ap = await env["wf"].get_approval(out["approval_id"])
+    assert ap["risk_class"] == "elevated"
+
+
+async def test_explicit_risk_field_forces_elevation(env) -> None:
+    await env["goals"].create_goal(
+        owner_actor_id="ck-san", objective="t", max_steps=2,
+        simulation_plan=[{"risk": "elevated", "day": 1, "action": "shortlist x"}],
+    )
+    goal = (await env["goals"].list_goals())[-1]
+    out = await run_due_dispatch(
+        goal_store=env["goals"], workflow_store=env["wf"],
+        agent_run_store=env["agents"], goal_id=goal["goal_id"],
+        allowed_action_keywords=["shortlist"],
+    )
+    ap = await env["wf"].get_approval(out["approval_id"])
+    assert ap["risk_class"] == "elevated"
