@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     goal_dispatch_enabled: bool = False
     goal_dispatch_cron_minute: int = 30
     goal_dispatch_goal_id: str = "2c821d69-c7c3-42ff-96cb-d1aaddc245b0"
+    # Comma-separated keywords matched against plan-entry "action" text.
+    # Empty = unrestricted. Non-matching actions still file an approval,
+    # but with risk_class='elevated' instead of 'low'.
+    goal_dispatch_allowed_actions: str = ""
 
     # Perception
     vault_dir: Path = Path("~/.xnch/vault").expanduser()

@@ -41,6 +41,21 @@ async def claim_next_agent_run(body: AgentClaimRequest, request: Request):
     row = await store.claim_next(body.runner_id, ttl_s=body.ttl_s)
     if row is None:
         return Response(status_code=204)
+    wf_store = getattr(request.app.state, "workflow_store", None)
+    if wf_store is not None and row.get("approval_id"):
+        try:
+            approval = await wf_store.get_approval(row["approval_id"])
+            if approval is not None:
+                await wf_store.record_event(
+                    approval["producer_id"], "CLAIMED", actor=body.runner_id,
+                    snapshot={"run_id": row["id"]},
+                )
+        except Exception:  # noqa: BLE001 — audit must not break dispatch
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "failed to record CLAIMED event for run %s", row["id"]
+            )
     return row
 
 

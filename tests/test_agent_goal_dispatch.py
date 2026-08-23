@@ -137,9 +137,11 @@ async def test_dispatch_skips_unknown_goal_and_exhausted(env) -> None:
         await env["wf"].decide_approval(ap["id"], decision="approve", actor="t")
         await spawn_agent_run_for_approval(agent_run_store=env["agents"], approval=ap)
         run_row = (await env["agents"].list_runs())[0]
-        await env["agents"].complete_run(run_row["id"], outcome_status="DONE", exit_code=0)
+        await env["agents"].claim_next("test-runner", ttl_s=600)
+        after = await env["agents"].complete_run(run_row["id"], outcome_status="DONE",
+                                                 exit_code=0)
         await apply_bp(agent_run_store=env["agents"], workflow_store=env["wf"],
-                       goal_store=env["goals"], run_row=(await env["agents"].get_run(run_row["id"])))
+                       goal_store=env["goals"], run_row=after)
     final = await run_due_dispatch(**{**kw, "goal_id": goal["goal_id"]})
     assert final == {"skipped": "plan shorter than steps_completed"}
 
@@ -173,6 +175,71 @@ async def test_full_loop_approve_spawn_outcome_advances_goal(env) -> None:
     g = await env["goals"].get_goal(gid)
     assert g["steps_completed"] == 1
     assert g["last_step_outcome"] == "SUCCESS"
+
+
+async def test_goal_path_writes_step_events_across_lifecycle(env) -> None:
+    """Audit continuity: file -> spawn -> claim -> outcome all append events."""
+    goal = await _seed_goal(env)
+    gid = goal["goal_id"]
+    await run_due_dispatch(goal_store=env["goals"], workflow_store=env["wf"],
+                           agent_run_store=env["agents"], goal_id=gid)
+
+    filed = await env["wf"].step_events(gid)
+    assert [e["event_type"] for e in filed] == ["FILED"]
+    assert json.loads(filed[0]["snapshot_json"])["step_index"] == 0
+
+    ap = await env["wf"].pending_goal_approval(gid)
+    await env["wf"].decide_approval(ap["id"], decision="approve", actor="ck-san")
+    await spawn_agent_run_for_approval(agent_run_store=env["agents"],
+                                       workflow_store=env["wf"], approval=ap)
+    types = [e["event_type"] for e in await env["wf"].step_events(gid)]
+    assert "SPAWNED" in types
+
+    run_row = (await env["agents"].list_runs())[0]
+    await env["agents"].claim_next("test-runner", ttl_s=600)
+
+    after_done = await env["agents"].complete_run(
+        run_row["id"], outcome_status="DONE", exit_code=0)
+    await apply_bp(agent_run_store=env["agents"], workflow_store=env["wf"],
+                   goal_store=env["goals"], run_row=after_done)
+    types = [e["event_type"] for e in await env["wf"].step_events(gid)]
+    assert "DONE" in types
+
+
+async def test_route_level_claim_and_outcome_write_events(env) -> None:
+    """HTTP path writes CLAIMED on /dispatch/next and terminal event on outcome."""
+    routes = _load(f"xgd_ev_routes_{uuid4().hex}", "routes/workflows.py")
+    aroutes = _load(f"xgd_ev_aroutes_{uuid4().hex}", "routes/agents.py")
+    app = FastAPI()
+    app.state.workflow_store = env["wf"]
+    app.state.agent_run_store = env["agents"]
+    app.state.goal_store = env["goals"]
+    app.state.gateway_secret = ""
+    tc = TestClient(app)
+    tc.app.include_router(routes.approvals_router)
+    tc.app.include_router(aroutes.router)
+
+    goal = await _seed_goal(env)
+    gid = goal["goal_id"]
+    await run_due_dispatch(goal_store=env["goals"], workflow_store=env["wf"],
+                           agent_run_store=env["agents"], goal_id=gid)
+    ap = await env["wf"].pending_goal_approval(gid)
+    assert tc.post(f"/approvals/{ap['id']}/decide",
+                   json={"decision": "approve"}).status_code == 200
+
+    runs = await env["agents"].list_runs()
+    claim = tc.post("/agents/dispatch/next",
+                    json={"runner_id": "test-runner", "ttl_s": 600})
+    assert claim.status_code == 200
+    assert "CLAIMED" in [e["event_type"] for e in await env["wf"].step_events(gid)]
+
+    done = tc.post(f"/agents/runs/{runs[0]['id']}/outcome",
+                   json={"outcome_status": "DONE", "exit_code": 0})
+    assert done.status_code == 200
+    types = [e["event_type"] for e in await env["wf"].step_events(gid)]
+    assert types[-1] == "DONE"
+    g = await env["goals"].get_goal(gid)
+    assert g["steps_completed"] == 1 and g["last_step_outcome"] == "SUCCESS"
 
 
 async def test_route_level_gate_and_backpressure(env) -> None:
@@ -221,3 +288,85 @@ async def test_route_level_gate_and_backpressure(env) -> None:
     g2 = await env["goals"].get_goal(gid)
     assert g2["last_step_outcome"] == "FAILURE"
     assert g2["consecutive_failures"] == 1
+
+
+async def test_allowlist_match_files_low_nonmatch_files_elevated(env) -> None:
+    """Allowlist enforcement: matching actions stay 'low', others 'elevated'."""
+    goal = await _seed_goal(env)
+    kw = dict(goal_store=env["goals"], workflow_store=env["wf"],
+              agent_run_store=env["agents"], goal_id=goal["goal_id"])
+
+    out = await run_due_dispatch(
+        **kw, allowed_action_keywords=["shortlist", "resume"])
+    ap = await env["wf"].get_approval(out["approval_id"])
+    assert ap["risk_class"] == "low"
+
+    await env["wf"].decide_approval(ap["id"], decision="approve", actor="t")
+    await spawn_agent_run_for_approval(agent_run_store=env["agents"],
+                                       workflow_store=env["wf"], approval=ap)
+    run_row = (await env["agents"].list_runs())[0]
+    await env["agents"].claim_next("test-runner", ttl_s=600)
+    after = await env["agents"].complete_run(run_row["id"], outcome_status="DONE")
+    await apply_bp(agent_run_store=env["agents"], workflow_store=env["wf"],
+                   goal_store=env["goals"], run_row=after)
+
+    out2 = await run_due_dispatch(**kw, allowed_action_keywords=["shortlist"])
+    ap2 = await env["wf"].get_approval(out2["approval_id"])
+    assert ap2["risk_class"] == "elevated"
+
+
+async def test_no_allowlist_keeps_low_risk(env) -> None:
+    """Default (no allowlist configured) preserves current behavior."""
+    goal = await _seed_goal(env)
+    out = await run_due_dispatch(goal_store=env["goals"], workflow_store=env["wf"],
+                                 agent_run_store=env["agents"],
+                                 goal_id=goal["goal_id"])
+    ap = await env["wf"].get_approval(out["approval_id"])
+    assert ap["risk_class"] == "low"
+
+
+async def test_inflight_guard_skips_refile_until_outcome(env) -> None:
+    """Approved-but-not-yet-outcomed step must not be re-filed by the next tick."""
+    goal = await _seed_goal(env)
+    gid = goal["goal_id"]
+    kw = dict(goal_store=env["goals"], workflow_store=env["wf"],
+              agent_run_store=env["agents"], goal_id=gid)
+    first = await run_due_dispatch(**kw)
+    ap = await env["wf"].pending_goal_approval(gid)
+    await env["wf"].decide_approval(ap["id"], decision="approve", actor="t")
+    await spawn_agent_run_for_approval(agent_run_store=env["agents"],
+                                       workflow_store=env["wf"], approval=ap)
+
+    second = await run_due_dispatch(**kw)
+    assert second == {"skipped": "previous step still in flight"}
+    assert len(await env["agents"].list_runs()) == 1
+
+    run_row = (await env["agents"].list_runs())[0]
+    await env["agents"].claim_next("test-runner", ttl_s=600)
+    after = await env["agents"].complete_run(run_row["id"], outcome_status="DONE")
+    await apply_bp(agent_run_store=env["agents"], workflow_store=env["wf"],
+                   goal_store=env["goals"], run_row=after)
+
+    third = await run_due_dispatch(**kw)
+    assert third.get("step_index") == 1
+    assert first.get("step_index") == 0
+
+
+async def test_retry_sweep_spawns_missing_run_once(env) -> None:
+    """APPROVED goal approval with no linked agent_run gets spawned exactly once."""
+    sweep_fn = getattr(_gd, "retry_unspawned_approvals")
+    goal = await _seed_goal(env)
+    gid = goal["goal_id"]
+    await run_due_dispatch(goal_store=env["goals"], workflow_store=env["wf"],
+                           agent_run_store=env["agents"], goal_id=gid)
+    ap = await env["wf"].pending_goal_approval(gid)
+    await env["wf"].decide_approval(ap["id"], decision="approve", actor="t")
+
+    result = await sweep_fn(workflow_store=env["wf"], agent_run_store=env["agents"])
+    assert result["spawned"] == 1
+    runs = await env["agents"].list_runs()
+    assert len(runs) == 1 and runs[0]["approval_id"] == ap["id"]
+
+    again = await sweep_fn(workflow_store=env["wf"], agent_run_store=env["agents"])
+    assert again["spawned"] == 0
+    assert len(await env["agents"].list_runs()) == 1

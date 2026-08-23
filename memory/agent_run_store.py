@@ -121,3 +121,26 @@ class AgentRunStore:
             ) as cur:
                 row = await cur.fetchone()
         return dict(row) if row else None
+
+    async def active_run_for_approval(self, approval_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM agent_runs WHERE approval_id = ?"
+                " AND status IN ('QUEUED','RUNNING')"
+                " ORDER BY created_at DESC LIMIT 1",
+                (approval_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def get_run_by_approval(self, approval_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM agent_runs WHERE approval_id = ?"
+                " ORDER BY created_at DESC LIMIT 1",
+                (approval_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        return dict(row) if row else None

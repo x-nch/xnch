@@ -186,8 +186,13 @@ async def lifespan(app: FastAPI):
         )
 
     if settings.goal_dispatch_enabled:
-        from .jobs.goal_dispatch import run_due_dispatch
+        from .jobs.goal_dispatch import retry_unspawned_approvals, run_due_dispatch
 
+        allowed_keywords = [
+            k.strip()
+            for k in settings.goal_dispatch_allowed_actions.split(",")
+            if k.strip()
+        ]
         scheduler.add_job(
             run_due_dispatch,
             "cron",
@@ -198,6 +203,17 @@ async def lifespan(app: FastAPI):
                 "workflow_store": s.workflow_store,
                 "agent_run_store": s.agent_run_store,
                 "goal_id": settings.goal_dispatch_goal_id,
+                "allowed_action_keywords": allowed_keywords or None,
+            },
+        )
+        scheduler.add_job(
+            retry_unspawned_approvals,
+            "interval",
+            minutes=10,
+            id="goal_dispatch_spawn_sweep",
+            kwargs={
+                "workflow_store": s.workflow_store,
+                "agent_run_store": s.agent_run_store,
             },
         )
 

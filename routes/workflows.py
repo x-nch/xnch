@@ -318,6 +318,7 @@ async def decide_approval(
             if body.decision == "approve" and runner_store is not None:
                 await spawn_agent_run_for_approval(
                     agent_run_store=runner_store, approval=row,
+                    workflow_store=getattr(request.app.state, "workflow_store", None),
                 )
             elif body.decision == "reject" and goal_store is not None:
                 await goal_store.complete_step(row["producer_id"], "FAILURE")

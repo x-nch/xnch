@@ -458,9 +458,10 @@ class WorkflowStore:
 
             new_status = "APPROVED" if decision == "approve" else "REJECTED"
             now = _now()
-            await db.execute(
+            async with db.execute(
                 "UPDATE approvals SET status=?, decision_note=?, decided_by=?,"
-                " decided_at=?, idempotency_key=? WHERE id=?",
+                " decided_at=?, idempotency_key=?"
+                " WHERE id=? AND status='AWAITING_APPROVAL'",
                 (
                     new_status,
                     note,
@@ -469,7 +470,10 @@ class WorkflowStore:
                     idempotency_key,
                     approval_id,
                 ),
-            )
+            ) as upd_cur:
+                updated_rows = upd_cur.rowcount
+            if not updated_rows:
+                raise ApprovalConflict(f"approval is {appr['status']}")
             await db.execute(
                 "INSERT INTO step_events (step_uuid, event_type, actor, ts,"
                 " snapshot_json) VALUES (?, ?, ?, ?, ?)",
@@ -741,8 +745,32 @@ class WorkflowStore:
                 row = await cur.fetchone()
         return dict(row) if row else None
 
+    async def latest_goal_approval(self, goal_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self._db) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM approvals WHERE producer_type = 'goal_step'"
+                " AND producer_id = ? ORDER BY created_at DESC LIMIT 1",
+                (goal_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def recent_goal_approvals(
+        self, *, status: str, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self._db) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM approvals WHERE producer_type = 'goal_step'"
+                " AND status = ? ORDER BY created_at ASC LIMIT ?",
+                (status, limit),
+            ) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+
     async def create_goal_approval(
-        self, *, goal_id: str, payload: dict[str, Any]
+        self, *, goal_id: str, payload: dict[str, Any],
+        risk_class: str = "low",
     ) -> dict[str, Any]:
         approval_id = str(uuid4())
         now = _now()
@@ -750,10 +778,39 @@ class WorkflowStore:
             await db.execute(
                 "INSERT INTO approvals (id, producer_type, producer_id,"
                 " payload_json, status, risk_class, created_at)"
-                " VALUES (?, 'goal_step', ?, ?, 'AWAITING_APPROVAL', 'low', ?)",
-                (approval_id, goal_id, json.dumps(payload), now),
+                " VALUES (?, 'goal_step', ?, ?, 'AWAITING_APPROVAL', ?, ?)",
+                (approval_id, goal_id, json.dumps(payload), risk_class, now),
+            )
+            await self.record_event(
+                goal_id, "FILED", actor="goal_dispatch",
+                snapshot=payload, db=db,
             )
             await db.commit()
         row = await self.get_approval(approval_id)
         assert row is not None
         return row
+
+    async def record_event(
+        self,
+        step_uuid: str,
+        event_type: str,
+        *,
+        actor: str,
+        snapshot: dict[str, Any] | None = None,
+        db: aiosqlite.Connection | None = None,
+    ) -> None:
+        """Append one audit event. Owns its transaction when ``db`` is None."""
+        async def _insert(conn: aiosqlite.Connection) -> None:
+            await conn.execute(
+                "INSERT INTO step_events (step_uuid, event_type, actor, ts,"
+                " snapshot_json) VALUES (?, ?, ?, ?, ?)",
+                (step_uuid, event_type, actor, _now(),
+                 json.dumps(snapshot or {})),
+            )
+
+        if db is not None:
+            await _insert(db)
+            return
+        async with aiosqlite.connect(self._db) as own_db:
+            await _insert(own_db)
+            await own_db.commit()
