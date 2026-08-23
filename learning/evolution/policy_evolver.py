@@ -107,7 +107,7 @@ class PolicyRuleEvolver:
     async def _default_fetch_episodes(self) -> list[dict]:
         from datetime import datetime, timedelta, timezone
 
-        from ..memory.pg_episodic_store import PgEpisodicStore
+        from ...memory.pg_episodic_store import PgEpisodicStore
 
         store = PgEpisodicStore()
         await store.connect()
@@ -128,7 +128,7 @@ class PolicyRuleEvolver:
 
         import aiosqlite
 
-        from ..config import settings
+        from ...config import settings
 
         async with aiosqlite.connect(settings.base_dir / "xnch.db") as db:
             await db.execute(

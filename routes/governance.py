@@ -6,10 +6,12 @@ from typing import Any
 from uuid import uuid4
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ..config import settings
+from ..learning.evolution.promotion_gate import evaluate_weight_candidate
+from .workflows import require_gateway_access
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/governance", tags=["governance"])
@@ -41,7 +43,10 @@ async def get_weights(intent_class: str, request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/weights/propose")
+@router.post(
+    "/weights/propose",
+    dependencies=[Depends(require_gateway_access)],
+)
 async def propose_weights(body: dict[str, Any], request: Request) -> dict[str, Any]:
     version = f"wc-proposed-{uuid4().hex[:8]}"
     async with aiosqlite.connect(settings.base_dir / "xnch.db") as db:
@@ -56,8 +61,13 @@ async def propose_weights(body: dict[str, Any], request: Request) -> dict[str, A
     return {"version": version, "status": "pending"}
 
 
-@router.post("/weights/approve")
-async def approve_weights(version: str, request: Request) -> dict[str, Any]:
+@router.post(
+    "/weights/approve",
+    dependencies=[Depends(require_gateway_access)],
+)
+async def approve_weights(
+    version: str, request: Request, force: bool = False
+) -> dict[str, Any]:
     app = request.app.state
     db_path = settings.base_dir / "xnch.db"
 
@@ -78,6 +88,29 @@ async def approve_weights(version: str, request: Request) -> dict[str, Any]:
         if any(v < 0.05 for v in weights.values()):
             raise HTTPException(status_code=422, detail="Each weight must be >= 0.05")
 
+        gate = await evaluate_weight_candidate(
+            intent_class=intent_class,
+            proposed_weights=weights,
+        )
+        if gate["status"] == "block" and not force:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "candidate regresses vs active config on recent episodes",
+                    "eval": gate,
+                    "hint": "re-submit with force=true to override",
+                },
+            )
+
+        eval_bits = [f"eval={gate['status']}"]
+        if "proposed_fitness" in gate:
+            eval_bits.append(f"proposed={gate['proposed_fitness']:.4f}")
+            eval_bits.append(f"current={gate['current_fitness']:.4f}")
+            eval_bits.append(f"episodes={gate.get('episodes', '?')}")
+        description = f"Approved from proposal ({', '.join(eval_bits)})"
+        if force:
+            description += " [FORCED]"
+
         await db.execute(
             "UPDATE weight_configs SET is_active = 0 WHERE intent_class = ?", (intent_class,)
         )
@@ -85,21 +118,24 @@ async def approve_weights(version: str, request: Request) -> dict[str, Any]:
             """INSERT OR REPLACE INTO weight_configs
                (version, intent_class, description, weights, approved_at, approved_by, is_active)
                VALUES (?, ?, ?, ?, ?, ?, 1)""",
-            (version, intent_class, f"Approved from proposal", weights_json,
+            (version, intent_class, description, weights_json,
              time.time(), "operator"),
         )
         await db.execute("DELETE FROM pending_weight_configs WHERE version = ?", (version,))
         await db.commit()
 
     await app.increment_state_version()
-    return {"version": version, "status": "active"}
+    return {"version": version, "status": "active", "eval": gate, "description": description}
 
 
 # ------------------------------------------------------------------
 # Actors
 # ------------------------------------------------------------------
 
-@router.post("/actors")
+@router.post(
+    "/actors",
+    dependencies=[Depends(require_gateway_access)],
+)
 async def upsert_actor(body: dict[str, Any], request: Request) -> dict[str, Any]:
     app = request.app.state
     await app.governance.upsert_actor(
