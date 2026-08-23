@@ -23,7 +23,10 @@ class AgentRunStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
 
-    async def create_run(self, *, prompt: str, workspace: str | None = None) -> dict[str, Any]:
+    async def create_run(
+        self, *, prompt: str, workspace: str | None = None,
+        approval_id: str | None = None,
+    ) -> dict[str, Any]:
         run_id = str(uuid4())
         now = _now()
         if workspace is None:
@@ -31,8 +34,9 @@ class AgentRunStore:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 "INSERT INTO agent_runs (id, status, prompt, workspace,"
-                " created_at, updated_at) VALUES (?, 'QUEUED', ?, ?, ?, ?)",
-                (run_id, prompt, workspace, now, now),
+                " approval_id, created_at, updated_at)"
+                " VALUES (?, 'QUEUED', ?, ?, ?, ?, ?)",
+                (run_id, prompt, workspace, approval_id, now, now),
             )
             await db.commit()
         row = await self.get_run(run_id)

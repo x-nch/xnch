@@ -182,6 +182,22 @@ async def lifespan(app: FastAPI):
             kwargs={"pg_episodic": s.pg_episodic, "graph_store": s.graph_store},
         )
 
+    if settings.goal_dispatch_enabled:
+        from .jobs.goal_dispatch import run_due_dispatch
+
+        scheduler.add_job(
+            run_due_dispatch,
+            "cron",
+            minute=settings.goal_dispatch_cron_minute,
+            id="goal_dispatch",
+            kwargs={
+                "goal_store": s.goal_store,
+                "workflow_store": s.workflow_store,
+                "agent_run_store": s.agent_run_store,
+                "goal_id": settings.goal_dispatch_goal_id,
+            },
+        )
+
     scheduler.start()
     s.scheduler = scheduler
 

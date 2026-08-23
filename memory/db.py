@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     exit_code        INTEGER,
     output_path      TEXT,
     error            TEXT,
+    approval_id      TEXT,
     created_at       REAL NOT NULL DEFAULT (unixepoch()),
     updated_at       REAL NOT NULL DEFAULT (unixepoch())
 );
@@ -235,6 +236,11 @@ async def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path) as db:
         await db.executescript(_SCHEMA)
+        # Migrations: additive columns for pre-existing installs.
+        cur = await db.execute("PRAGMA table_info(agent_runs)")
+        cols = {row[1] for row in await cur.fetchall()}
+        if "approval_id" not in cols:
+            await db.execute("ALTER TABLE agent_runs ADD COLUMN approval_id TEXT")
         await db.commit()
 
 

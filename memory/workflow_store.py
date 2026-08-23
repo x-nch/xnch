@@ -724,3 +724,36 @@ class WorkflowStore:
                 (step_uuid,),
             ) as cur:
                 return [dict(r) for r in await cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # Goal-step approvals (producer_type='goal_step')
+    # ------------------------------------------------------------------
+
+    async def pending_goal_approval(self, goal_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self._db) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM approvals WHERE producer_type = 'goal_step'"
+                " AND producer_id = ? AND status = 'AWAITING_APPROVAL'"
+                " ORDER BY created_at DESC LIMIT 1",
+                (goal_id,),
+            ) as cur:
+                row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def create_goal_approval(
+        self, *, goal_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        approval_id = str(uuid4())
+        now = _now()
+        async with aiosqlite.connect(self._db) as db:
+            await db.execute(
+                "INSERT INTO approvals (id, producer_type, producer_id,"
+                " payload_json, status, risk_class, created_at)"
+                " VALUES (?, 'goal_step', ?, ?, 'AWAITING_APPROVAL', 'low', ?)",
+                (approval_id, goal_id, json.dumps(payload), now),
+            )
+            await db.commit()
+        row = await self.get_approval(approval_id)
+        assert row is not None
+        return row

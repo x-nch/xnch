@@ -309,6 +309,24 @@ async def decide_approval(
         if type(exc).__name__ == "ApprovalConflict":
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         raise
+    if row.get("producer_type") == "goal_step":
+        from xnch.jobs.goal_dispatch import spawn_agent_run_for_approval
+
+        runner_store = getattr(request.app.state, "agent_run_store", None)
+        goal_store = getattr(request.app.state, "goal_store", None)
+        try:
+            if body.decision == "approve" and runner_store is not None:
+                await spawn_agent_run_for_approval(
+                    agent_run_store=runner_store, approval=row,
+                )
+            elif body.decision == "reject" and goal_store is not None:
+                await goal_store.complete_step(row["producer_id"], "FAILURE")
+        except Exception:  # noqa: BLE001 — decision already recorded; side-effect failures log only
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "goal_step post-decide hook failed for %s", row["id"]
+            )
     return _serialize_approval(row)
 
 

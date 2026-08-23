@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     session_ingest_scheduled: bool = True
     session_ingest_cron_minute: int = 15
 
+    # Goal-step auto-dispatch (v1): cron files a goal_step APPROVAL;
+    # human approve spawns the agent_run. Default off.
+    goal_dispatch_enabled: bool = False
+    goal_dispatch_cron_minute: int = 30
+    goal_dispatch_goal_id: str = "2c821d69-c7c3-42ff-96cb-d1aaddc245b0"
+
     # Perception
     vault_dir: Path = Path("~/.xnch/vault").expanduser()
     perception_redis_db: int = 0

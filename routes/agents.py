@@ -66,6 +66,21 @@ async def agent_run_outcome(
             status_code=409,
             detail=f"agent run is {existing['status']}, not RUNNING",
         )
+    from xnch.jobs.goal_dispatch import apply_outcome_backpressure
+
+    try:
+        await apply_outcome_backpressure(
+            agent_run_store=store,
+            workflow_store=getattr(request.app.state, "workflow_store", None),
+            goal_store=getattr(request.app.state, "goal_store", None),
+            run_row=row,
+        )
+    except Exception:  # noqa: BLE001 — outcome recorded; back-pressure logs only
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "goal step-outcome back-pressure failed for run %s", run_id
+        )
     return row
 
 
