@@ -25,6 +25,7 @@ from .routes import (
     nexi_gateway_router, chat_router, admin_router, voice_router, goal_router,
     pipeline_router,
 )
+from .routes import approvals_router, workflows_router
 from xnch_mcp.http_router import router as mcp_router
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,15 @@ async def lifespan(app: FastAPI):
     s.pattern_store = PatternStore(settings.db_path)
     s.experience_store = ExperienceStore(settings.db_path)
     s.goal_store = GoalStore(settings.db_path)
+
+    # Workflows + unified approvals (spec: docs/superpowers/specs/2026-08-22-workflows-backend-design.md)
+    from .memory.workflow_store import WorkflowStore
+
+    s.workflow_store = WorkflowStore(
+        settings.db_path,
+        executor_enabled=settings.workflow_executor_enabled,
+    )
+    s.gateway_secret = settings.gateway_secret
     s.kv_cache = KVCache(settings.redis_url)
 
     # Audit
@@ -170,6 +180,17 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     s.scheduler = scheduler
 
+    # Workflow schedule jobs (P3) — restart catch-up via misfire_grace_time.
+    from .jobs.workflow_schedule import sync_all_workflow_jobs
+
+    try:
+        _wf_store_for_sched = getattr(s, "workflow_store", None)
+        if _wf_store_for_sched is not None:
+            _all_wfs = await _wf_store_for_sched.list_workflows()
+            sync_all_workflow_jobs(scheduler, _all_wfs, store=_wf_store_for_sched)
+    except Exception as exc:
+        logger.warning("workflow schedule sync failed: %s", exc)
+
     # LangGraph decision pipeline with HITL (opt-in)
     s.pipeline_runtime = None
     if settings.langgraph_pipeline:
@@ -225,6 +246,8 @@ app.include_router(admin_router)
 app.include_router(voice_router)
 app.include_router(goal_router)
 app.include_router(pipeline_router)
+app.include_router(workflows_router)
+app.include_router(approvals_router)
 app.include_router(mcp_router)
 
 

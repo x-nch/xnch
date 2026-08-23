@@ -127,6 +127,84 @@ CREATE TABLE IF NOT EXISTS goals (
 
 CREATE INDEX IF NOT EXISTS idx_goals_due ON goals(status, next_due_at);
 
+-- Workflows: durable playbook definitions.
+CREATE TABLE IF NOT EXISTS workflows (
+    id              TEXT PRIMARY KEY,
+    owner_actor_id  TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    description     TEXT,
+    trigger_json    TEXT NOT NULL DEFAULT '{}',
+    steps_json      TEXT NOT NULL DEFAULT '[]',
+    created_at      REAL NOT NULL DEFAULT (unixepoch()),
+    updated_at      REAL NOT NULL DEFAULT (unixepoch())
+);
+
+-- Workflow runs: execution instances; steps embedded as JSON in v1
+-- (promoted to a row-level table when the nexi executor lands).
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id               TEXT PRIMARY KEY,
+    workflow_id      TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL CHECK (status IN ('RUNNING','COMPLETED','FAILED','CANCELLED')),
+    trigger_json     TEXT NOT NULL DEFAULT '{}',
+    steps_json       TEXT NOT NULL DEFAULT '[]',
+    idempotency_key  TEXT UNIQUE,
+    created_at       REAL NOT NULL DEFAULT (unixepoch()),
+    updated_at       REAL NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON workflow_runs(status, created_at);
+
+-- Run steps: row-level runtime state for the nexi executor (P2).
+-- steps_json above remains a denormalized read-model snapshot.
+CREATE TABLE IF NOT EXISTS workflow_run_steps (
+    step_uuid        TEXT PRIMARY KEY,
+    run_id           TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+    idx              INTEGER NOT NULL,
+    kind             TEXT NOT NULL DEFAULT 'other',
+    summary          TEXT NOT NULL DEFAULT '',
+    payload_json     TEXT NOT NULL DEFAULT '{}',
+    requires_approval INTEGER NOT NULL DEFAULT 1,
+    status           TEXT NOT NULL CHECK (status IN ('PENDING','AWAITING_APPROVAL','APPROVED','CLAIMED','EXECUTING','RETRYING','DONE','REJECTED','EXPIRED','CANCELLED','FAILED')),
+    approval_id      TEXT,
+    retry_count      INTEGER NOT NULL DEFAULT 0,
+    max_retries      INTEGER NOT NULL DEFAULT 3,
+    next_retry_at    REAL,
+    lease_owner      TEXT,
+    lease_expires_at REAL,
+    created_at       REAL NOT NULL DEFAULT (unixepoch()),
+    updated_at       REAL NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_steps_claim ON workflow_run_steps(status, next_retry_at, lease_expires_at);
+CREATE INDEX IF NOT EXISTS idx_steps_run ON workflow_run_steps(run_id, idx);
+
+-- Approvals: first-class HITL queue, producer-agnostic.
+CREATE TABLE IF NOT EXISTS approvals (
+    id              TEXT PRIMARY KEY,
+    producer_type   TEXT NOT NULL CHECK (producer_type IN ('chat','tool_call','goal_step','workflow_step')),
+    producer_id     TEXT NOT NULL,
+    payload_json    TEXT NOT NULL DEFAULT '{}',
+    status          TEXT NOT NULL CHECK (status IN ('AWAITING_APPROVAL','APPROVED','REJECTED','EXPIRED','CANCELLED')),
+    risk_class      TEXT NOT NULL DEFAULT 'low' CHECK (risk_class IN ('low','elevated')),
+    decision_note   TEXT,
+    decided_by      TEXT,
+    decided_at      REAL,
+    expires_at      REAL,
+    idempotency_key TEXT UNIQUE,
+    created_at      REAL NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_status_exp ON approvals(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_approvals_producer ON approvals(producer_type, created_at);
+
+-- Step events: append-only audit trail. Never UPDATEd, never DELETEd.
+CREATE TABLE IF NOT EXISTS step_events (
+    seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+    step_uuid      TEXT NOT NULL,
+    event_type     TEXT NOT NULL,
+    actor          TEXT NOT NULL,
+    ts             REAL NOT NULL DEFAULT (unixepoch()),
+    snapshot_json  TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_events_step ON step_events(step_uuid, seq);
+
 CREATE TABLE IF NOT EXISTS system_state (
     key     TEXT PRIMARY KEY,
     value   TEXT NOT NULL
