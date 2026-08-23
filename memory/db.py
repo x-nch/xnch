@@ -3,7 +3,13 @@ from pathlib import Path
 
 import aiosqlite
 
-from ..observability.metrics import timed_sqlite
+try:
+    from ..observability.metrics import timed_sqlite
+except ImportError:  # standalone/file-loaded contexts (workflow P2 tests)
+    def timed_sqlite(store: str):
+        def decorator(fn):
+            return fn
+        return decorator
 
 
 _SCHEMA = """
