@@ -14,6 +14,8 @@ from uuid import uuid4
 
 import aiosqlite
 
+from .session_ingest.redactor import redact_text
+
 
 def _now() -> float:
     return time.time()
@@ -80,6 +82,10 @@ class AgentRunStore:
     ) -> dict[str, Any] | None:
         if outcome_status not in ("DONE", "FAILED"):
             raise ValueError(f"invalid outcome_status: {outcome_status!r}")
+        if result_text:
+            result_text, _ = redact_text(result_text)
+        if error:
+            error, _ = redact_text(error)
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(

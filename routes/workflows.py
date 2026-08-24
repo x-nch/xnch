@@ -1,9 +1,10 @@
 """Workflow CRUD + run + unified approval queue endpoints.
 
-Backed by app.state.workflow_store. Write endpoints are gated by the
-Hybrid-B gateway token (see security/gateway_token.py): when
-``app.state.gateway_secret`` is set, requests must present a valid
-``X-Gateway-Token`` or ``X-Service-Key``; when unset (dev/test) the gate is open.
+Backed by app.state.workflow_store. All endpoints are gated by the Hybrid-B
+gateway token (see security/gateway_token.py): when ``app.state.gateway_secret``
+is set, requests must present a valid ``X-Gateway-Token`` or
+``X-Service-Key``; when unset, gated routes fail CLOSED (503) unless
+``XNCH_ALLOW_OPEN_GATEWAY=1`` explicitly opts into open mode (dev/test only).
 
 Imports stay light (fastapi/pydantic/models/gateway_token only) so this module
 is loadable without the full xnch dependency tree.
@@ -19,6 +20,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Literal
 
+from xnch.config import settings
 from xnch.models.workflow import (
     ApprovalDecideRequest,
     WorkflowCreateRequest,
@@ -39,6 +41,15 @@ async def require_gateway_access(
 ) -> None:
     secret = getattr(request.app.state, "gateway_secret", "")
     if not secret:
+        if not settings.allow_open_gateway:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "gateway secret not configured; refusing gated traffic "
+                    "(set XNCH_GATEWAY_SECRET, or XNCH_ALLOW_OPEN_GATEWAY=1 "
+                    "for throwaway dev instances)"
+                ),
+            )
         return
     if verify_gateway_token(secret, x_gateway_token or ""):
         return
@@ -295,6 +306,17 @@ async def decide_approval(
 ) -> dict[str, Any]:
     store = _get_store(request)
     actor = request.headers.get("X-Actor-Id", "operator")
+    row = await store.get_approval(approval_id)
+    if (
+        row is not None
+        and row.get("status") == "AWAITING_APPROVAL"
+        and row.get("risk_class") == "elevated"
+        and request.headers.get("X-Actor-Role", "").strip().lower() != "admin"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="elevated-risk approval requires X-Actor-Role: admin",
+        )
     try:
         row = await store.decide_approval(
             approval_id,

@@ -92,6 +92,45 @@ async def test_complete_run_failed_carries_error(store: AgentRunStore) -> None:
     assert failed["error"] == "boom"
 
 
+async def test_complete_run_redacts_secrets_in_result_and_error(
+    store: AgentRunStore,
+) -> None:
+    raw_result = (
+        "fetched page said: Authorization: Bearer abcd1234efgh5678ijkl\n"
+        "token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456 leaked in log"
+    )
+    raw_error = "traceback: aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    row = await store.create_run(prompt="p", workspace="w")
+    await store.claim_next("r1", ttl_s=60)
+    done = await store.complete_run(
+        row["id"],
+        outcome_status="DONE",
+        exit_code=0,
+        result_text=raw_result,
+    )
+    failed = await store.create_run(prompt="q", workspace="w2")
+    await store.claim_next("r2", ttl_s=60)
+    err = await store.complete_run(failed["id"], outcome_status="FAILED", error=raw_error)
+
+    assert done is not None and err is not None
+    assert "abcd1234efgh5678ijkl" not in (done["result_text"] or "")
+    assert "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456" not in (done["result_text"] or "")
+    assert "[REDACTED:" in (done["result_text"] or "")
+    assert "wJalrXUtnFEMI" not in (err["error"] or "")
+    assert "[REDACTED:" in (err["error"] or "")
+
+
+async def test_complete_run_leaves_clean_text_untouched(
+    store: AgentRunStore,
+) -> None:
+    clean = "# Job Search Report\n\nShortlisted 10 companies for review."
+    row = await store.create_run(prompt="p", workspace="w")
+    await store.claim_next("r1", ttl_s=60)
+    done = await store.complete_run(row["id"], outcome_status="DONE", result_text=clean)
+    assert done is not None
+    assert done["result_text"] == clean
+
+
 async def test_complete_on_queued_returns_none(store: AgentRunStore) -> None:
     row = await store.create_run(prompt="p", workspace="w")
     assert await store.complete_run(row["id"], outcome_status="DONE") is None

@@ -125,7 +125,7 @@ def test_full_operator_journey_reject_path(env):
     d1 = c.post(
         f"/approvals/{queue[0]['id']}/decide",
         json={"decision": "reject", "note": "wrong quarter"},
-        headers={"X-Actor-Id": "operator-7"},
+        headers={"X-Actor-Id": "operator-7", **_admin()},
     )
     assert d1.status_code == 200
     body = d1.json()
@@ -135,7 +135,9 @@ def test_full_operator_journey_reject_path(env):
     assert len(remaining) == 2
     for approval in remaining:
         assert c.post(
-            f"/approvals/{approval['id']}/decide", json={"decision": "approve"}
+            f"/approvals/{approval['id']}/decide",
+            json={"decision": "approve"},
+            headers=_admin(),
         ).status_code == 200
 
     replay = c.post(f"/approvals/{queue[0]['id']}/decide", json={"decision": "approve"})
@@ -158,7 +160,11 @@ def test_approve_all_completes_run(env):
     assert c.post(f"/workflows/{wf['id']}/run").status_code == 201
     for approval in c.get("/approvals?status=pending").json():
         assert (
-            c.post(f"/approvals/{approval['id']}/decide", json={"decision": "approve"}).status_code
+            c.post(
+                f"/approvals/{approval['id']}/decide",
+                json={"decision": "approve"},
+                headers=_admin(),
+            ).status_code
             == 200
         )
     runs = c.get("/workflows/runs", params={"workflow_id": wf["id"]}).json()
@@ -244,9 +250,47 @@ def test_gateway_token_gate_blocks_unsigned_writes(tmp_path):
         good = c.post(
             f"/approvals/{approval['id']}/decide",
             json={"decision": "approve"},
-            headers={"X-Gateway-Token": mint_gateway_token(secret)},
+            headers={"X-Gateway-Token": mint_gateway_token(secret), **_admin()},
         )
         assert good.status_code == 200
+
+
+def _admin() -> dict[str, str]:
+    return {"X-Actor-Role": "admin"}
+
+
+def test_elevated_approval_decide_requires_admin_role(env):
+    c, store = env
+
+    async def mk(risk):
+        return await store.create_goal_approval(
+            goal_id="g-" + risk,
+            payload={"summary": f"{risk} step"},
+            risk_class=risk,
+        )
+
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        elevated = loop.run_until_complete(mk("elevated"))
+        low = loop.run_until_complete(mk("low"))
+    finally:
+        loop.close()
+
+    denied = c.post(f"/approvals/{elevated['id']}/decide", json={"decision": "approve"})
+    assert denied.status_code == 403
+    assert "admin" in denied.json()["detail"].lower()
+
+    allowed = c.post(
+        f"/approvals/{elevated['id']}/decide",
+        json={"decision": "approve"},
+        headers=_admin(),
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["status"] == "APPROVED"
+
+    plain = c.post(f"/approvals/{low['id']}/decide", json={"decision": "approve"})
+    assert plain.status_code == 200
 
 
 def test_epoch_seconds_sanity():

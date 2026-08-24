@@ -38,10 +38,11 @@ def _load(name: str, rel: str):
 _db = _load("xgd_db", "memory/db.py")
 _goals = _load("xgd_goals", "memory/goal_store.py")
 _wf = _load("xgd_wf", "memory/workflow_store.py")
-_ar = _load("xgd_ar", "memory/agent_run_store.py")
 _gd = _load("xgd_job", "jobs/goal_dispatch.py")
 init_db = _db.init_db
-GoalStore, WorkflowStore, AgentRunStore = _goals.GoalStore, _wf.WorkflowStore, _ar.AgentRunStore
+from xnch.memory.agent_run_store import AgentRunStore  # noqa: E402 — package import; store now uses relative redactor import
+
+GoalStore, WorkflowStore = _goals.GoalStore, _wf.WorkflowStore
 run_due_dispatch = _gd.run_due_dispatch
 apply_bp = _gd.apply_outcome_backpressure
 spawn_agent_run_for_approval = _gd.spawn_agent_run_for_approval
@@ -225,7 +226,8 @@ async def test_route_level_claim_and_outcome_write_events(env) -> None:
                            agent_run_store=env["agents"], goal_id=gid)
     ap = await env["wf"].pending_goal_approval(gid)
     assert tc.post(f"/approvals/{ap['id']}/decide",
-                   json={"decision": "approve"}).status_code == 200
+                   json={"decision": "approve"},
+                   headers={"X-Actor-Role": "admin"}).status_code == 200
 
     runs = await env["agents"].list_runs()
     claim = tc.post("/agents/dispatch/next",
@@ -261,7 +263,8 @@ async def test_route_level_gate_and_backpressure(env) -> None:
                            agent_run_store=env["agents"], goal_id=gid)
     ap = await env["wf"].pending_goal_approval(gid)
 
-    ok = tc.post(f"/approvals/{ap['id']}/decide", json={"decision": "approve"})
+    ok = tc.post(f"/approvals/{ap['id']}/decide", json={"decision": "approve"},
+                 headers={"X-Actor-Role": "admin"})
     assert ok.status_code == 200
     runs = await env["agents"].list_runs()
     assert runs and runs[0]["approval_id"] == ap["id"]
@@ -282,7 +285,8 @@ async def test_route_level_gate_and_backpressure(env) -> None:
     await run_due_dispatch(goal_store=env["goals"], workflow_store=env["wf"],
                            agent_run_store=env["agents"], goal_id=gid)
     ap2 = await env["wf"].pending_goal_approval(gid)
-    rej = tc.post(f"/approvals/{ap2['id']}/decide", json={"decision": "reject"})
+    rej = tc.post(f"/approvals/{ap2['id']}/decide", json={"decision": "reject"},
+                  headers={"X-Actor-Role": "admin"})
     assert rej.status_code == 200
     assert len(await env["agents"].list_runs()) == 1  # still only the approved run
     g2 = await env["goals"].get_goal(gid)
@@ -315,14 +319,14 @@ async def test_allowlist_match_files_low_nonmatch_files_elevated(env) -> None:
     assert ap2["risk_class"] == "elevated"
 
 
-async def test_no_allowlist_keeps_low_risk(env) -> None:
-    """Default (no allowlist configured) preserves current behavior."""
+async def test_no_allowlist_defaults_elevated(env) -> None:
+    """Fail-closed default: no allowlist configured ⇒ every step files elevated."""
     goal = await _seed_goal(env)
     out = await run_due_dispatch(goal_store=env["goals"], workflow_store=env["wf"],
                                  agent_run_store=env["agents"],
                                  goal_id=goal["goal_id"])
     ap = await env["wf"].get_approval(out["approval_id"])
-    assert ap["risk_class"] == "low"
+    assert ap["risk_class"] == "elevated"
 
 
 async def test_inflight_guard_skips_refile_until_outcome(env) -> None:

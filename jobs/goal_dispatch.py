@@ -98,16 +98,15 @@ async def run_due_dispatch(
 
     entry_plan = _plan_of(goal)[done]
     action = str(entry_plan.get("action", ""))
-    risk_class = "low"
-    if allowed_action_keywords:
-        lowered = action.lower()
-        matched = any(
-            k.strip().lower() in lowered
-            for k in allowed_action_keywords
-            if k.strip()
-        )
-        if not matched:
-            risk_class = "elevated"
+    # Fail-closed: a step is low-risk ONLY when a configured allowlist
+    # explicitly matches it. No allowlist configured ⇒ everything elevates.
+    lowered = action.lower()
+    matched = bool(allowed_action_keywords) and any(
+        k.strip().lower() in lowered
+        for k in allowed_action_keywords
+        if k.strip()
+    )
+    risk_class = "low" if matched else "elevated"
     # Explicit plan-entry signals force elevation regardless of keyword match
     # (2026-08-24 audit F6 addendum): a step that declares itself an external
     # action — or carries risk="elevated" — is never filed as low-risk.

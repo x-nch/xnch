@@ -31,10 +31,10 @@ def _load(name: str, rel: str):
 
 
 _db = _load("xnch_agents_db", "memory/db.py")
-_store_mod = _load("xnch_agents_store", "memory/agent_run_store.py")
 _token = _load("xnch_agents_token", "security/gateway_token.py")
 init_db = _db.init_db
-AgentRunStore = _store_mod.AgentRunStore
+from xnch.memory.agent_run_store import AgentRunStore  # noqa: E402 — package import; store now uses relative redactor import
+
 mint_gateway_token = _token.mint_gateway_token
 
 SECRET = "test-secret"
@@ -128,25 +128,35 @@ def test_outcome_happy_404_and_409(client) -> None:
     assert ok.status_code == 200
     assert ok.json()["status"] == "DONE"
 
-    detail = tc.get(f"/agents/runs/{run_id}")
+    detail = tc.get(f"/agents/runs/{run_id}", headers=h)
     assert detail.status_code == 200
     assert detail.json()["result_text"] == "the answer"
 
-    missing_detail = tc.get("/agents/runs/nope")
+    missing_detail = tc.get("/agents/runs/nope", headers=h)
     assert missing_detail.status_code == 404
 
     missing = tc.post("/agents/runs/nope/outcome", json={"outcome_status": "DONE"}, headers=h)
     assert missing.status_code == 404
 
 
-def test_list_runs_open_read(client) -> None:
+def test_run_reads_require_gateway_token(client) -> None:
     tc, _ = client
-    tc.post("/agents/dispatch", json={"prompt": "visible"}, headers=_token_header())
-    r = tc.get("/agents/runs")  # no token — reads are open
-    assert r.status_code == 200
-    assert [x["prompt"] for x in r.json()] == ["visible"]
+    run_id = tc.post(
+        "/agents/dispatch", json={"prompt": "visible"}, headers=_token_header()
+    ).json()["id"]
 
-    filtered = tc.get("/agents/runs?status=RUNNING")
+    assert tc.get("/agents/runs").status_code == 401
+    assert tc.get(f"/agents/runs/{run_id}").status_code == 401
+
+    ok = tc.get("/agents/runs", headers=_token_header())
+    assert ok.status_code == 200
+    assert [x["prompt"] for x in ok.json()] == ["visible"]
+
+    detail = tc.get(f"/agents/runs/{run_id}", headers=_token_header())
+    assert detail.status_code == 200
+    assert detail.json()["prompt"] == "visible"
+
+    filtered = tc.get("/agents/runs?status=RUNNING", headers=_token_header())
     assert filtered.json() == []
 
 
@@ -187,3 +197,43 @@ async def test_direct_dispatch_enabled_allows_queueing(tmp_path: Path) -> None:
 
 async def store_count(store_cls, db: Path) -> int:
     return len(await store_cls(db).list_runs())
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed gateway: an app with no gateway_secret configured must refuse
+# gated traffic outright (503) instead of silently serving it open. Operators
+# opt into open-mode explicitly via XNCH_ALLOW_OPEN_GATEWAY=1.
+# ---------------------------------------------------------------------------
+
+def test_unset_secret_fails_closed(monkeypatch) -> None:
+    from xnch.config import settings
+
+    monkeypatch.setattr(settings, "allow_open_gateway", False)
+    tc = _build_app(AgentRunStore(_unused_db()))
+    tc.app.state.gateway_secret = ""
+
+    assert tc.get("/agents/runs").status_code == 503
+    r = tc.post("/agents/dispatch", json={"prompt": "x"}, headers=_token_header())
+    assert r.status_code == 503
+
+
+async def test_open_mode_opt_in_restores_legacy_behavior(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from xnch.config import settings
+
+    monkeypatch.setattr(settings, "allow_open_gateway", False)
+    db = tmp_path / "open.db"
+    await init_db(db)
+    tc = _build_app(AgentRunStore(db))
+    tc.app.state.gateway_secret = ""
+    monkeypatch.setattr(settings, "allow_open_gateway", True)
+
+    assert tc.post("/agents/dispatch", json={"prompt": "x"}).status_code == 201
+    assert tc.get("/agents/runs").status_code == 200
+
+
+def _unused_db() -> Path:
+    import tempfile
+
+    return Path(tempfile.mkdtemp()) / "unused.db"
