@@ -2,7 +2,7 @@
 
 Pull model: a Mac-side runner claims QUEUED runs via /agents/dispatch/next
 (lease-based, same protocol family as the workflow executor) and pushes an
-outcome back. Writes are Hybrid-B gateway-token gated; reads are open.
+outcome back. All writes and reads are Hybrid-B gateway-token gated.
 """
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ async def agent_run_outcome(
     return row
 
 
-@router.get("/runs/{run_id}")
+@router.get("/runs/{run_id}", dependencies=[Depends(require_gateway_access)])
 async def get_agent_run(run_id: str, request: Request) -> dict[str, Any]:
     row = await _get_store(request).get_run(run_id)
     if row is None:
@@ -122,7 +122,7 @@ async def get_agent_run(run_id: str, request: Request) -> dict[str, Any]:
     return row
 
 
-@router.get("/runs")
+@router.get("/runs", dependencies=[Depends(require_gateway_access)])
 async def list_agent_runs(
     request: Request,
     status: str | None = None,

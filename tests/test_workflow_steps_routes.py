@@ -70,7 +70,11 @@ def test_claim_and_outcome_over_http(tmp_path):
     # approve → APPROVED (executor-enabled store), not terminal
     (approval,) = c.get("/approvals?status=pending").json()
     assert (
-        c.post(f"/approvals/{approval['id']}/decide", json={"decision": "approve"}).status_code
+        c.post(
+            f"/approvals/{approval['id']}/decide",
+            json={"decision": "approve"},
+            headers={"X-Actor-Role": "admin"},
+        ).status_code
         == 200
     )
     rows = store.get_run_step_rows_sync_hack(run_id) if hasattr(store, "get_run_step_rows_sync_hack") else None
@@ -130,7 +134,7 @@ def test_service_key_gate_on_executor_endpoints(tmp_path):
         c.post(
             f"/approvals/{approval['id']}/decide",
             json={"decision": "approve"},
-            headers={"X-Service-Key": secret},
+            headers={"X-Service-Key": secret, "X-Actor-Role": "admin"},
         ).status_code
         == 200
     )

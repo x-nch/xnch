@@ -131,8 +131,9 @@ class Settings(BaseSettings):
     # the muse-style manual dispatch path is wanted.
     agents_direct_dispatch_enabled: bool = False
     # Comma-separated keywords matched against plan-entry "action" text.
-    # Empty = unrestricted. Non-matching actions still file an approval,
-    # but with risk_class='elevated' instead of 'low'.
+    # Fail-closed: only matching actions file risk_class='low'; anything
+    # else — including an EMPTY allowlist — files 'elevated', which the
+    # decide route gates to X-Actor-Role: admin.
     goal_dispatch_allowed_actions: str = ""
 
     # Perception
@@ -177,8 +178,10 @@ class Settings(BaseSettings):
     hitl_risk_threshold: float = 0.5
 
     # Gateway token (Hybrid-B): shared HMAC secret with the web proxy.
-    # Empty ⇒ /workflows + /approvals write-gate is open (dev/test only).
+    # Empty + allow_open_gateway=False ⇒ gated routes 503 (fail-closed).
+    # Set XNCH_ALLOW_OPEN_GATEWAY=1 only for throwaway dev instances.
     gateway_secret: str = ""
+    allow_open_gateway: bool = False
 
     # Workflow executor (P2): when True, approving a step leaves it APPROVED
     # for nexi to claim+execute; False keeps v1 approve⇒DONE semantics.
