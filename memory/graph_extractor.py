@@ -219,29 +219,28 @@ def _parse_triples_json(content: str) -> list[dict[str, Any]]:
 
 
 async def _extract_litellm(text: str) -> list[dict[str, Any]]:
-    """Extract triples via the LiteLLM proxy's OpenAI-compatible endpoint.
+    """Extract triples via OpenCode Go API (DeepSeek V4).
 
-    The proxy's model ids are authoritative, so the configured id is sent
-    verbatim; the litellm SDK is bypassed because its client-side router
-    rejects bare ids (LLM Provider NOT provided).
+    Uses the OpenCode Go hosted API's OpenAI-compatible endpoint for
+    entity-relation extraction.
     """
-    import os
-
     from xnch.config import settings as xnch_settings
 
-    api_key = os.environ.get("LITELLM_MASTER_KEY", "")
-    api_base = xnch_settings.litellm_proxy_url.rstrip("/")
+    api_key = xnch_settings.opencode_go_api_key
+    api_base = xnch_settings.opencode_go_api_url.rstrip("/")
     model = xnch_settings.graph_extractor_model
     provider_hint = xnch_settings.graph_extractor_provider_hint
     if provider_hint:
         model = f"{provider_hint}/{model}"
     if len(text) > 6000:
         text = text[:6000] + "\n...[truncated]"
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
-                f"{api_base}/v1/chat/completions",
+                f"{api_base}/chat/completions",
                 json={
                     "model": model,
                     "messages": [
@@ -258,10 +257,10 @@ async def _extract_litellm(text: str) -> list[dict[str, Any]]:
             )
         if resp.status_code >= 400:
             raise RuntimeError(
-                f"LiteLLM proxy returned {resp.status_code}: {resp.text[:200]}"
+                f"OpenCode Go API returned {resp.status_code}: {resp.text[:200]}"
             )
     except Exception:
-        logger.exception("LiteLLM extraction failed for episode text")
+        logger.exception("OpenCode Go API extraction failed for episode text")
         raise
     content = resp.json()["choices"][0]["message"]["content"].strip()
     if content.startswith("```"):

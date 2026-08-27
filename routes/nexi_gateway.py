@@ -27,8 +27,8 @@ SYSTEM_PROMPT_CACHE_TTL = 60
 
 from xnch.routing.recall_intent import recall_query as _recall_query
 
-LITELLM_BASE = os.environ.get("LITELLM_BASE_URL", settings.litellm_proxy_url)
-LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", os.environ.get("LITELLM_MASTER_KEY", ""))
+OPENCODE_GO_BASE = os.environ.get("OPENCODE_GO_BASE_URL", settings.opencode_go_api_url)
+OPENCODE_GO_API_KEY = os.environ.get("OPENCODE_GO_API_KEY", settings.opencode_go_api_key)
 
 
 class ChatRequest(BaseModel):

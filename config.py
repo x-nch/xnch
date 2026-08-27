@@ -93,28 +93,32 @@ class Settings(BaseSettings):
     )
     recent_alerts_capacity: int = 200
 
-    # LiteLLM proxy
-    litellm_proxy_url: str = "http://litellm:4000"
+    # OpenCode Go API (hosted DeepSeek V4)
+    opencode_go_api_url: str = "https://opencode.ai/zen/go/v1"
+    opencode_go_api_key: str = ""
+    opencode_go_api_timeout_s: float = 60.0
 
-    # LLM availability probe (vLLM ornith on node-b)
-    llm_status_url: str = "http://192.168.50.2:8082/health"
-    llm_model_id: str = "ornith-1.0-35b"
-    llm_probe_timeout_s: float = 3.0
+    # LiteLLM proxy (legacy; kept for rollback)
+    litellm_proxy_url: str = ""
+
+    # LLM availability probe (OpenCode Go hosted)
+    llm_status_url: str = "https://opencode.ai/zen/go/v1/models"
+    llm_model_id: str = "deepseek-v4-pro"
+    llm_probe_timeout_s: float = 5.0
 
     # Prometheus (operator UI summarizer; runs co-located on Node A)
     prometheus_url: str = "http://127.0.0.1:9090"
     prometheus_timeout_s: float = 4.0
 
-    # Graph extractor (remote via LiteLLM proxy by default; opt into the
-    # in-process llama.cpp backend with XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>)
-    graph_extractor_model: str = "ornith"
+    # Graph extractor (OpenCode Go hosted DeepSeek V4)
+    graph_extractor_model: str = "deepseek-v4-pro"
     graph_extractor_provider_hint: str = ""
 
     # Session ingest (OpenCode SQLite logs -> episodic + semantic tiers)
     session_ingest_db_path: Path = Path(
         "~/.local/share/opencode/opencode.db"
     ).expanduser()
-    session_ingest_model: str = "ornith"
+    session_ingest_model: str = "deepseek-v4-pro"
     session_ingest_max_tokens: int = 4096
     session_ingest_project_dirs: str = ""
     session_ingest_scheduled: bool = True

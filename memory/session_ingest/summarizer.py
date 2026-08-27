@@ -1,8 +1,7 @@
-"""LLM session summarizer routed through the local LiteLLM/ornith path.
+"""LLM session summarizer routed through OpenCode Go API (DeepSeek V4).
 
-Mirrors xnch.memory.graph_extractor._extract_litellm: the LiteLLM proxy is
-the only transport (vLLM ornith on node-b); there is no external-API
-fallback. Every call is traced to Langfuse with a session-scoped trace id.
+Mirrors xnch.memory.graph_extractor._extract_litellm: the OpenCode Go API is
+the transport. Every call is traced to Langfuse with a session-scoped trace id.
 """
 
 from __future__ import annotations
@@ -46,11 +45,11 @@ Transcript digest:
 
 def _model_name() -> str:
     model = settings.session_ingest_model
-    return model if "/" in model else f"openai/{model}"
+    return f"openai/{model}" if "/" not in model else model
 
 
 async def summarize_session(digest: SessionDigest) -> SessionSummary:
-    """Produce a SessionSummary for a parsed session via ornith."""
+    """Produce a SessionSummary for a parsed session via DeepSeek V4."""
     prompt = _SUMMARY_PROMPT.format(
         title=digest.title,
         goal=digest.goal or "(not stated)",
@@ -72,8 +71,8 @@ async def summarize_session(digest: SessionDigest) -> SessionSummary:
             },
             {"role": "user", "content": prompt},
         ],
-        api_base=settings.litellm_proxy_url.rstrip("/"),
-        api_key=os.environ.get("LITELLM_MASTER_KEY", ""),
+        api_base=settings.opencode_go_api_url.rstrip("/"),
+        api_key=settings.opencode_go_api_key or "",
         temperature=0.1,
         max_tokens=settings.session_ingest_max_tokens,
     )
