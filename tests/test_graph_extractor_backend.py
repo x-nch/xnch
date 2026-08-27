@@ -106,15 +106,15 @@ class _FakeProxyClient:
 
 
 def _proxy(monkeypatch, content="[]", status_code=200, model="ornith", hint="", key="sk-test"):
-    monkeypatch.setenv("LITELLM_MASTER_KEY", key)
+    monkeypatch.setattr("xnch.config.settings.opencode_go_api_key", key)
+    monkeypatch.setattr("xnch.config.settings.opencode_go_api_url", "https://opencode.ai/zen/go/v1")
     monkeypatch.setattr(gmod.httpx, "AsyncClient", lambda **kw: _FakeProxyClient(content, status_code))
     monkeypatch.setattr("xnch.config.settings.graph_extractor_model", model)
     monkeypatch.setattr("xnch.config.settings.graph_extractor_provider_hint", hint)
-    monkeypatch.setattr("xnch.config.settings.litellm_proxy_url", "http://localhost:4000")
 
 
-class TestLiteLLMProxyModel:
-    """Extraction posts straight to the proxy REST endpoint with the id verbatim."""
+class TestOpenCodeGoModel:
+    """Extraction posts straight to the OpenCode Go API endpoint with the id verbatim."""
 
     async def test_posts_to_openai_compatible_endpoint_with_verbatim_model(self, monkeypatch):
         _proxy(monkeypatch, model="ornith")
@@ -122,7 +122,7 @@ class TestLiteLLMProxyModel:
         assert _FakeProxyClient.url.endswith("/v1/chat/completions")
         assert _FakeProxyClient.payload["model"] == "ornith"
 
-    async def test_sends_master_key_as_bearer_header(self, monkeypatch):
+    async def test_sends_api_key_as_bearer_header(self, monkeypatch):
         _proxy(monkeypatch, key="sk-master")
         await gmod._extract_litellm("text")
         assert _FakeProxyClient.headers["Authorization"] == "Bearer sk-master"

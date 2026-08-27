@@ -78,13 +78,14 @@ async def test_prose_wrapped_bracket_rescue(acompletion, trace_spy):
     assert result.facts[0].relation == "chosen_over"
 
 
-async def test_routes_through_local_litellm_proxy_not_external(acompletion, trace_spy):
+async def test_routes_through_opencode_go_endpoint(acompletion, trace_spy):
     acompletion.return_value = _llm_response('{"summary": "x"}')
     await summarize_session(_digest())
     kwargs = acompletion.await_args.kwargs
-    assert kwargs["model"].endswith("ornith")
-    assert kwargs["api_base"] == smod.settings.litellm_proxy_url
+    assert kwargs["model"] == smod._model_name()
+    assert kwargs["api_base"] == smod.settings.opencode_go_api_url
     assert kwargs["api_base"] != ""
+    assert kwargs.get("api_key") == smod.settings.opencode_go_api_key
 
 
 async def test_prompt_contains_goal_transcript_and_files(acompletion, trace_spy):

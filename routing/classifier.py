@@ -104,7 +104,7 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
     if metadata.get("privacy_sensitive"):
         route = ModelRoute(
             model_name="ornith",
-            reason="privacy_sensitive: routed to local model",
+            reason="privacy_sensitive: routed to ornith",
         )
         _cache_store(raw_input, route, actor_role, metadata)
         return route
@@ -115,7 +115,7 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
     if intent_class == "EXECUTION":
         route = ModelRoute(
             model_name="ornith",
-            reason="intent_class=EXECUTION: routed to local model",
+            reason="intent_class=EXECUTION: routed to ornith",
         )
         _cache_store(raw_input, route, actor_role, metadata)
         return route
@@ -125,14 +125,14 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
         if complexity_score > 0.7:
             route = ModelRoute(
                 model_name="ornith",
-                reason=f"intent_class=DECISION complexity={complexity_score:.2f}: routed to local model",
+                reason=f"intent_class=DECISION complexity={complexity_score:.2f}: routed to ornith",
             )
             _cache_store(raw_input, route, actor_role, metadata)
             return route
 
     route = ModelRoute(
         model_name="ornith",
-        reason="default route: local model",
+        reason="default route: ornith",
     )
     _cache_store(raw_input, route, actor_role, metadata)
     return route

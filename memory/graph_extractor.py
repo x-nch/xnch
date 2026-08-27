@@ -1,7 +1,7 @@
 """Graph extractor — LLM-based entity/relation extraction.
 
 Supports two backends:
-- litellm: remote via the LiteLLM proxy (default — async network I/O)
+- opencode_go: remote via the OpenCode Go API (default — async network I/O)
 - llama_cpp: in-process llama.cpp (opt-in via
   XNCH_GRAPH_EXTRACTOR_MODEL=llama_cpp/<file>.gguf; runs off the event loop)
 
