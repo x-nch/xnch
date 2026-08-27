@@ -13,7 +13,6 @@ from nexi.character.prompt_loader import build_system_prompt, load_capabilities
 from nexi.pipeline.context_assembler import assemble_context
 from nexi.proactivity.engine import ProactivityEngine
 from xnch.config import settings
-from xnch.routing.classifier import classify_request
 from xnch.routing.response_sanitize import strip_thinking
 from xnch.security.injection_guard import scan_input
 from xnch.security.memory_guard import validate_memory_write
@@ -134,9 +133,8 @@ async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
         agent_lessons=await _agent_lessons_for_chat(app, body.message),
     )
 
-    route = classify_request(body.message, body.actor_role, {})
     messages = ctx.to_messages(body.message)
-    model_name = route.model_name
+    model_name = settings.llm_model_id
 
     await app.working_memory.append_turn(body.session_id, "user", body.message)
 
@@ -203,9 +201,8 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
         agent_lessons=await _agent_lessons_for_chat(app, body.message),
     )
 
-    route = classify_request(body.message, body.actor_role, {})
     messages = ctx.to_messages(body.message)
-    model_name = route.model_name
+    model_name = settings.llm_model_id
 
     await app.working_memory.append_turn(body.session_id, "user", body.message)
 
