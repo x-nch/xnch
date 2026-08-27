@@ -1,4 +1,4 @@
-"""LiteLLM routing classifier with a Redis exact-match cache.
+"""Request routing classifier with a Redis exact-match cache.
 
 Replaces the agentmemory/ChromaDB routing-decisions cache. Decisions are
 keyed on the normalized raw input so repeated requests are served from
@@ -103,8 +103,8 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
 
     if metadata.get("privacy_sensitive"):
         route = ModelRoute(
-            model_name="deepseek-v4-pro",
-            reason="privacy_sensitive: routed to hosted model",
+            model_name="ornith",
+            reason="privacy_sensitive: routed to local model",
         )
         _cache_store(raw_input, route, actor_role, metadata)
         return route
@@ -114,8 +114,8 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
 
     if intent_class == "EXECUTION":
         route = ModelRoute(
-            model_name="deepseek-v4-pro",
-            reason="intent_class=EXECUTION: routed to hosted model",
+            model_name="ornith",
+            reason="intent_class=EXECUTION: routed to local model",
         )
         _cache_store(raw_input, route, actor_role, metadata)
         return route
@@ -124,15 +124,15 @@ def classify_request(raw_input: str, actor_role: str, metadata: dict) -> ModelRo
         complexity_score = _compute_complexity(raw_input, metadata)
         if complexity_score > 0.7:
             route = ModelRoute(
-                model_name="deepseek-v4-pro",
-                reason=f"intent_class=DECISION complexity={complexity_score:.2f}: routed to deepseek-v4-pro",
+                model_name="ornith",
+                reason=f"intent_class=DECISION complexity={complexity_score:.2f}: routed to local model",
             )
             _cache_store(raw_input, route, actor_role, metadata)
             return route
 
     route = ModelRoute(
-        model_name="deepseek-v4-pro",
-        reason="default route: deepseek-v4-pro",
+        model_name="ornith",
+        reason="default route: local model",
     )
     _cache_store(raw_input, route, actor_role, metadata)
     return route
