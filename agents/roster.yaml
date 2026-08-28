@@ -1,0 +1,372 @@
+- key: chief_of_staff
+  name: Chief of staff
+  role: Coordinates the agent roster and routes cross-functional requests
+  persona: You are the chief of staff, orchestrating the agent team and ensuring coherent execution.
+  allowed_tools:
+    - mcp:chat
+    - workflow:route_request
+    - agent:delegate
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+      - openrouter:frontier
+    complexity:
+      tokens_threshold: 6000
+      latency_budget_s: 30
+      price_ceiling_usd: 0.10
+    default_tier: openrouter:frontier
+  example_requests:
+    - "Plan the launch sequencing across marketing, sales, and engineering"
+  status: online
+
+- key: memory
+  name: Memory
+  role: Manages long-term and working memory stores
+  persona: You are the memory agent, responsible for durable recall and consolidation of knowledge.
+  allowed_tools:
+    - mcp:chat
+    - memory:store
+    - memory:recall
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 3000
+      latency_budget_s: 20
+      price_ceiling_usd: 0.04
+    default_tier: openrouter:auto
+  example_requests:
+    - "Summarize what we learned about the Q3 prospect list"
+  status: online
+
+- key: strategist
+  name: Strategist
+  role: Develops plans, positioning, and long-range strategy
+  persona: You are the strategist, turning ambiguous goals into coherent multi-step plans.
+  allowed_tools:
+    - mcp:chat
+    - workflow:route_request
+    - agent:delegate
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+      - openrouter:frontier
+    complexity:
+      tokens_threshold: 5000
+      latency_budget_s: 30
+      price_ceiling_usd: 0.08
+    default_tier: openrouter:frontier
+  example_requests:
+    - "Draft a 90-day growth strategy for the SMB segment"
+  status: online
+
+- key: researcher
+  name: Researcher
+  role: Conducts web and document research
+  persona: You are the researcher, gathering and synthesizing evidence from reliable sources.
+  allowed_tools:
+    - mcp:chat
+    - mcp:search
+    - workflow:route_request
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 4000
+      latency_budget_s: 40
+      price_ceiling_usd: 0.06
+    default_tier: openrouter:auto
+  example_requests:
+    - "Find the top five competitors in the developer-tools space"
+  status: online
+
+- key: finance
+  name: Finance
+  role: Tracks budgets, forecasts, and spend
+  persona: You are the finance agent, keeping the numbers honest and the runway clear.
+  allowed_tools:
+    - mcp:chat
+    - mcp:ledger
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 3000
+      latency_budget_s: 20
+      price_ceiling_usd: 0.04
+    default_tier: openrouter:auto
+  example_requests:
+    - "What is our burn rate against the Q3 plan?"
+  status: online
+
+- key: editor
+  name: Editor
+  role: Edits and polishes written content
+  persona: You are the editor, sharpening prose for clarity, tone, and correctness.
+  allowed_tools:
+    - mcp:chat
+    - mcp:docs
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 2500
+      latency_budget_s: 20
+      price_ceiling_usd: 0.03
+    default_tier: openrouter:auto
+  example_requests:
+    - "Tighten this product announcement for a founder audience"
+  status: online
+
+- key: sales
+  name: Sales
+  role: Drives pipeline, outreach, and deal progression
+  persona: You are the sales agent, moving prospects from interest to closed revenue.
+  allowed_tools:
+    - mcp:chat
+    - mcp:crm
+    - workflow:route_request
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+      - openrouter:frontier
+    complexity:
+      tokens_threshold: 3500
+      latency_budget_s: 25
+      price_ceiling_usd: 0.05
+    default_tier: openrouter:mid
+  example_requests:
+    - "Draft a follow-up sequence for the enterprise pipeline"
+  status: online
+
+- key: marketing
+  name: Marketing
+  role: Plans and executes marketing campaigns
+  persona: You are the marketing agent, turning positioning into demand.
+  allowed_tools:
+    - mcp:chat
+    - workflow:route_request
+    - mcp:social
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 4000
+      latency_budget_s: 25
+      price_ceiling_usd: 0.05
+    default_tier: openrouter:auto
+  example_requests:
+    - "Outline a launch campaign for the new API tier"
+  status: online
+
+- key: ops
+  name: Ops
+  role: Runs operational workflows and automation
+  persona: You are the ops agent, keeping processes reliable and repeatable.
+  allowed_tools:
+    - mcp:chat
+    - workflow:route_request
+    - agent:delegate
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 3500
+      latency_budget_s: 25
+      price_ceiling_usd: 0.04
+    default_tier: openrouter:auto
+  example_requests:
+    - "Automate the weekly reporting handoff to finance"
+  status: online
+
+- key: social_media
+  name: Social
+  role: Manages social media presence and content
+  persona: You are the social media agent, building audience through consistent, on-brand posts.
+  allowed_tools:
+    - mcp:chat
+    - mcp:social
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 2500
+      latency_budget_s: 20
+      price_ceiling_usd: 0.03
+    default_tier: openrouter:auto
+  example_requests:
+    - "Write three LinkedIn posts teasing the upcoming launch"
+  status: online
+
+- key: engineering
+  name: Engineering
+  role: Leads technical design and implementation
+  persona: You are the engineering agent, translating requirements into robust systems.
+  allowed_tools:
+    - mcp:chat
+    - mcp:code
+    - workflow:route_request
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+      - openrouter:frontier
+    complexity:
+      tokens_threshold: 6000
+      latency_budget_s: 30
+      price_ceiling_usd: 0.10
+    default_tier: openrouter:frontier
+  example_requests:
+    - "Design the service boundaries for the ingestion pipeline"
+  status: online
+
+- key: design
+  name: Design
+  role: Owns visual and product design
+  persona: You are the design agent, shaping clear and delightful user experiences.
+  allowed_tools:
+    - mcp:chat
+    - mcp:design
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 3000
+      latency_budget_s: 25
+      price_ceiling_usd: 0.04
+    default_tier: openrouter:auto
+  example_requests:
+    - "Propose a layout for the new dashboard overview"
+  status: online
+
+- key: developer
+  name: Developer
+  role: Implements code tasks and fixes
+  persona: You are the developer agent, shipping working, tested code.
+  allowed_tools:
+    - mcp:chat
+    - mcp:code
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+      - openrouter:frontier
+    complexity:
+      tokens_threshold: 5000
+      latency_budget_s: 30
+      price_ceiling_usd: 0.09
+    default_tier: openrouter:mid
+  example_requests:
+    - "Implement the pagination endpoint for the agent registry"
+  status: standby
+
+- key: analytics
+  name: Analytics
+  role: Analyzes metrics and produces insights
+  persona: You are the analytics agent, turning raw events into actionable signal.
+  allowed_tools:
+    - mcp:chat
+    - mcp:analytics
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 4000
+      latency_budget_s: 30
+      price_ceiling_usd: 0.05
+    default_tier: openrouter:auto
+  example_requests:
+    - "Why did activation drop for new signups last week?"
+  status: integration
+
+- key: crm
+  name: CRM
+  role: Manages customer relationship data
+  persona: You are the CRM agent, keeping customer records accurate and useful.
+  allowed_tools:
+    - mcp:chat
+    - mcp:crm
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 2500
+      latency_budget_s: 20
+      price_ceiling_usd: 0.03
+    default_tier: openrouter:auto
+  example_requests:
+    - "Segment churned accounts by plan tier"
+  status: integration
+
+- key: calendar
+  name: Calendar
+  role: Manages scheduling and meetings
+  persona: You are the calendar agent, coordinating time across people and teams.
+  allowed_tools:
+    - mcp:chat
+    - mcp:calendar
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 2000
+      latency_budget_s: 15
+      price_ceiling_usd: 0.02
+    default_tier: openrouter:auto
+  example_requests:
+    - "Find a 30-minute slot for the leadership sync this week"
+  status: integration
+
+- key: email
+  name: Email
+  role: Handles email drafting and triage
+  persona: You are the email agent, keeping communication clear and on time.
+  allowed_tools:
+    - mcp:chat
+    - mcp:email
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 2000
+      latency_budget_s: 15
+      price_ceiling_usd: 0.02
+    default_tier: openrouter:auto
+  example_requests:
+    - "Draft a status update to the board"
+  status: integration
+
+- key: drive
+  name: Drive
+  role: Manages documents and file storage
+  persona: You are the drive agent, organizing files and retrieving what is needed.
+  allowed_tools:
+    - mcp:chat
+    - mcp:drive
+  model_policy:
+    tiers:
+      - openrouter:auto
+      - openrouter:mid
+    complexity:
+      tokens_threshold: 2000
+      latency_budget_s: 15
+      price_ceiling_usd: 0.02
+    default_tier: openrouter:auto
+  example_requests:
+    - "Find the latest version of the pitch deck"
+  status: integration
