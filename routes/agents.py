@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from xnch.agents.roster import get_agent, load_roster
 from xnch.config import settings
 from xnch.models.agent import (
     AgentClaimRequest,
@@ -19,6 +20,19 @@ from xnch.models.agent import (
 from xnch.routes.workflows import require_gateway_access
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+@router.get("")
+async def list_agents() -> list[dict]:
+    return [a.model_dump() for a in load_roster()]
+
+
+@router.get("/{key}")
+async def get_agent_detail(key: str) -> dict:
+    agent = get_agent(key)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent not found")
+    return agent.model_dump()
 
 
 def _get_store(request: Request):
