@@ -18,7 +18,7 @@ class ScraperSettings(BaseSettings):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="XNCH_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="XNCH_")
 
     # Paths
     base_dir: Path = Path("~/.xnch").expanduser()
