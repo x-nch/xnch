@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # Nexi callback
     nexi_base_url: str = "http://localhost:8000"
 
+    # Execution sandbox (node-b)
+    executor_url: str = "http://192.168.50.2:8083"
+
     # Self (xnch) base URL — used by background jobs that POST to own API
     self_base_url: str = "http://localhost:8001"
 

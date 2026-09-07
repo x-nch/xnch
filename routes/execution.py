@@ -1,4 +1,4 @@
-"""Step 11-13: execution dispatch stub and outcome recording."""
+"""Step 11-13: execution dispatch (proxies to node-b executor) and outcome recording."""
 import asyncio
 import hashlib
 import json
@@ -13,6 +13,9 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/execution", tags=["execution"])
+
+# Executor service URL (node-b sandbox)
+EXECUTOR_URL = getattr(settings, "executor_url", "http://192.168.50.2:8083")
 
 
 class ExecutionOutcomeRequest(BaseModel):
@@ -47,7 +50,17 @@ def _normalize_outcome(value: str) -> str:
 
 @router.post("/execute")
 async def execute_stub(body: dict[str, Any], request: Request) -> dict[str, Any]:
-    """Stub execution runner — resolves a simulation override or a deterministic hash."""
+    """Proxy execution to node-b sandbox executor."""
+    # Forward to node-b executor service
+    try:
+        async with httpx.AsyncClient(base_url=EXECUTOR_URL, timeout=60.0) as client:
+            resp = await client.post("/execute", json=body)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError as exc:
+        logger.warning("executor proxy failed, falling back to simulation: %s", exc)
+    
+    # Fallback to deterministic simulation
     action_spec = body.get("action_spec") or {}
     sim = body.get("simulation") or {}
     outcome_override = sim.get("outcome")
