@@ -49,6 +49,11 @@ class WorkflowStepDef(BaseModel):
     preview: str | None = None
     requires_approval: bool = True
     description: str | None = None
+    # Per-step model override: when set, the workflow executor routes this step
+    # through a specific provider/model (e.g. provider="openrouter", model_id="openai/gpt-4o").
+    # When omitted, the pipeline default router picks the model.
+    model_provider: str | None = None
+    model_id: str | None = None
 
     @model_validator(mode="after")
     def _enforce_elevated_gating(self) -> WorkflowStepDef:
@@ -88,6 +93,8 @@ class RunStep(BaseModel):
     requires_approval: bool = True
     status: StepStatus = "PENDING"
     approval_id: str | None = None
+    model_provider: str | None = None
+    model_id: str | None = None
     retry_count: int = 0
     max_retries: int = 3
     next_retry_at: float | None = None

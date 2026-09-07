@@ -103,7 +103,10 @@ class Settings(BaseSettings):
 
     # LLM availability probe (OpenCode Go hosted)
     llm_status_url: str = "https://opencode.ai/zen/go/v1/models"
-    llm_model_id: str = "deepseek-v4-pro"
+    # Which model the gateway asks nexi's chat tool-loop to use. "nexi-default"
+    # is an alias meaning "let nexi's model router decide"; set any concrete
+    # model id (e.g. anthropic/claude-sonnet-4) to pin it per-deploy.
+    llm_model_id: str = "nexi-default"
     llm_probe_timeout_s: float = 5.0
 
     # Prometheus (operator UI summarizer; runs co-located on Node A)

@@ -218,6 +218,8 @@ class WorkflowStore:
                     "requires_approval": gated,
                     "status": status,
                     "approval_id": approval_id,
+                    "model_provider": sd.get("model_provider"),
+                    "model_id": sd.get("model_id"),
                     "retry_count": 0,
                     "max_retries": 3,
                     "next_retry_at": None,
@@ -239,6 +241,8 @@ class WorkflowStore:
                         "target": rs.get("target"),
                         "args": rs.get("args"),
                         "preview": rs.get("preview"),
+                        "model_provider": rs.get("model_provider"),
+                        "model_id": rs.get("model_id"),
                     }
                 ),
                 1 if rs["requires_approval"] else 0,
