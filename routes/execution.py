@@ -51,10 +51,16 @@ def _normalize_outcome(value: str) -> str:
 @router.post("/execute")
 async def execute_stub(body: dict[str, Any], request: Request) -> dict[str, Any]:
     """Proxy execution to node-b sandbox executor."""
+    # Transform workflow args -> executor params
+    executor_body = dict(body)
+    action_spec = executor_body.get("action_spec")
+    if isinstance(action_spec, dict) and "args" in action_spec and "params" not in action_spec:
+        action_spec["params"] = action_spec.pop("args")
+    
     # Forward to node-b executor service
     try:
         async with httpx.AsyncClient(base_url=EXECUTOR_URL, timeout=60.0) as client:
-            resp = await client.post("/execute", json=body)
+            resp = await client.post("/execute", json=executor_body)
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError as exc:
@@ -67,9 +73,9 @@ async def execute_stub(body: dict[str, Any], request: Request) -> dict[str, Any]
     if outcome_override is not None:
         status = _normalize_outcome(str(outcome_override))
     else:
-        status = simulate_outcome(
-            action_spec.get("type", ""), action_spec.get("params", {}) or {}
-        )
+        # Use params if available, else args
+        params = action_spec.get("params") or action_spec.get("args") or {}
+        status = simulate_outcome(action_spec.get("type", ""), params)
     outcome = ExecutionOutcomeRequest(
         execution_ref=str(body.get("execution_ref", "")),
         decision_id=str(body.get("decision_id", "")),
