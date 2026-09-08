@@ -109,7 +109,21 @@ async def test_trace_includes_session_scoped_trace_id(acompletion, trace_spy):
     assert trace_spy.await_args.kwargs["trace_id"] == "session-ingest:ses_x"
 
 
-async def test_llm_transport_error_propagates(acompletion, trace_spy):
-    acompletion.side_effect = ConnectionError("litellm down")
-    with pytest.raises(ConnectionError):
-        await summarize_session(_digest())
+async def test_primary_transport_error_falls_back_to_nexi_router(acompletion, trace_spy, monkeypatch):
+    import nexi.adapters.llm as nllm
+
+    acompletion.side_effect = ConnectionError("opencode go quota exceeded")
+    body = {
+        "choices": [{"message": {"content": json.dumps({"summary": "via fallback", "decisions": [], "outcome": "success", "facts": []})}}],
+        "usage": {"total_tokens": 7},
+    }
+    resolution = MagicMock(model_id="ornith", provider="litellm")
+    fallback = AsyncMock(return_value=(body, resolution))
+    monkeypatch.setattr(nllm, "chat_completion_with_fallback", fallback)
+
+    result = await summarize_session(_digest())
+
+    assert result.summary == "via fallback"
+    fallback.assert_awaited_once()
+    assert fallback.await_args.kwargs["json_mode"] is True
+    assert trace_spy.await_args.kwargs["model"] == "ornith"

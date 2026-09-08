@@ -1,7 +1,10 @@
 """LLM session summarizer routed through OpenCode Go API (DeepSeek V4).
 
 Mirrors xnch.memory.graph_extractor._extract_litellm: the OpenCode Go API is
-the transport. Every call is traced to Langfuse with a session-scoped trace id.
+the primary transport. If the OpenCode Go call fails (quota, credentials,
+network), we fail over to the nexi router (litellm/vLLM, then OpenRouter
+free) via chat_completion_with_fallback, mirroring the chat path.
+Every call is traced to Langfuse with a session-scoped trace id.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ import json
 import logging
 import os
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import litellm
@@ -59,6 +63,34 @@ async def summarize_session(digest: SessionDigest) -> SessionSummary:
         transcript=digest.transcript_digest or "(empty)",
     )
     started = time.perf_counter()
+    try:
+        resp, served_model, tokens_used = await _complete(prompt)
+    except Exception as primary_exc:
+        logger.warning(
+            "Primary summarizer (%s) failed: %s; falling back to nexi router",
+            _model_name(),
+            primary_exc,
+        )
+        resp, served_model, tokens_used = await _fallback(prompt)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    content = str(resp.choices[0].message.content).strip()
+
+    try:
+        summary = _parse_payload(content)
+    finally:
+        await trace_llm_call(
+            prompt=prompt[:8000],
+            response=content[:4000],
+            model=served_model,
+            latency_ms=latency_ms,
+            tokens_used=tokens_used,
+            trace_id=f"session-ingest:{digest.session_id}",
+        )
+    logger.info("Summarized session %s", digest.session_id)
+    return summary
+
+
+async def _complete(prompt: str) -> tuple[Any, str, int]:
     resp = await litellm.acompletion(
         model=_model_name(),
         messages=[
@@ -76,22 +108,33 @@ async def summarize_session(digest: SessionDigest) -> SessionSummary:
         temperature=0.1,
         max_tokens=settings.session_ingest_max_tokens,
     )
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    content = str(resp.choices[0].message.content).strip()
+    return resp, _model_name(), int(getattr(resp.usage, "total_tokens", 0) or 0)
 
-    try:
-        summary = _parse_payload(content)
-    finally:
-        await trace_llm_call(
-            prompt=prompt[:8000],
-            response=content[:4000],
-            model=_model_name(),
-            latency_ms=latency_ms,
-            tokens_used=int(getattr(resp.usage, "total_tokens", 0) or 0),
-            trace_id=f"session-ingest:{digest.session_id}",
-        )
-    logger.info("Summarized session %s", digest.session_id)
-    return summary
+
+async def _fallback(prompt: str) -> tuple[Any, str, int]:
+    from nexi.adapters.llm import chat_completion_with_fallback
+
+    body, resolution = await chat_completion_with_fallback(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You summarize coding-agent sessions. "
+                    "Return valid JSON only, no commentary."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        json_mode=True,
+        temperature=0.1,
+        max_tokens=settings.session_ingest_max_tokens,
+    )
+    content = str(body["choices"][0]["message"]["content"]).strip()
+    return (
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))]),
+        resolution.model_id,
+        int((body.get("usage") or {}).get("total_tokens", 0) or 0),
+    )
 
 
 def _parse_payload(content: str) -> SessionSummary:
