@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str
     actor_role: str = "operator"
+    method: str | None = None
 
 
 class MemoryRecallRequest(BaseModel):
@@ -147,6 +148,7 @@ async def chat(body: ChatRequest, request: Request) -> dict[str, Any]:
             model_name,
             session_id=body.session_id,
             actor_role="nexi",
+            method=body.method,
         )
     except Exception as exc:
         logger.error("LiteLLM call failed: %s", exc)
@@ -216,6 +218,7 @@ async def chat_stream(body: ChatRequest, request: Request) -> StreamingResponse:
                 model_name,
                 session_id=body.session_id,
                 actor_role="nexi",
+                method=body.method,
             )
         except Exception as exc:
             logger.error("LiteLLM stream/tool loop failed: %s", exc)
